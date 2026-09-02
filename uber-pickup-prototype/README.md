@@ -7,7 +7,7 @@ and shared live state.
 ## Run
 
 ```bash
-python3 -m http.server 4173
+python3 -m http.server 4173 --directory uber-pickup-prototype
 ```
 
 Then open `http://localhost:4173`.
