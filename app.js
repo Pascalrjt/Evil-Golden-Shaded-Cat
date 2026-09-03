@@ -8,7 +8,7 @@ const STATE_KEY = "pp:state";
 /* ---------- State ---------- */
 
 const state = {
-  session: { participantId: "P00", role: "passenger", scenarioId: "FREE", variant: "explained", orderPosition: 1 },
+  session: { participantId: "P00", role: "passenger", scenarioId: "FREE", variant: "explained", orderPosition: 1, useGps: true },
   scenario: getScenario("FREE"),
   spots: cloneFixture(),
   ui: defaultUi(),
@@ -16,8 +16,11 @@ const state = {
 
 function defaultUi() {
   return {
-    screen: "search",
+    screen: "locate",
     selectedSpotId: null,
+    mapCenter: null,
+    userPosition: null,
+    gpsAttempted: false,
     searchLabel: "",
     chosenAlternativeId: null,
     overridePending: false,
@@ -112,7 +115,7 @@ function walkFor(spot, origin = selectedSpot()) {
 
 function alternativesFor(spot) {
   return state.spots
-    .filter((candidate) => candidate.id !== spot.id && candidate.status !== "blocked" && validCoords(candidate.coordinates))
+    .filter((candidate) => candidate.id !== spot.id && !candidate.custom && ["suitable", "caution"].includes(candidate.status) && validCoords(candidate.coordinates))
     .filter((candidate) => !state.ui.stepFreeOnly || candidate.stepFree)
     .map((candidate) => ({ spot: candidate, walk: walkFor(candidate, spot) }))
     .sort((a, b) => {
@@ -124,7 +127,7 @@ function alternativesFor(spot) {
 function nearestSpot(coords) {
   let best = null;
   state.spots.forEach((spot) => {
-    if (!validCoords(spot.coordinates)) return;
+    if (!validCoords(spot.coordinates) || spot.custom) return;
     const distance = distanceMetres(coords, spot.coordinates);
     if (!best || distance < best.distance) best = { spot, distance };
   });
@@ -132,6 +135,7 @@ function nearestSpot(coords) {
 }
 
 function statusIcon(status) {
+  if (status === "unknown") return "map-pin";
   if (status === "blocked") return "circle-alert";
   if (status === "caution") return "triangle-alert";
   return "circle-check-big";
@@ -141,6 +145,8 @@ function freshnessText(spot) {
   const count = spot.reportCount || 1;
   const reporter = spot.lastReporter === "passenger" ? "passenger" : "driver";
   switch (spot.state) {
+    case "unreported":
+      return "No driver reports for this kerb yet";
     case "verified":
       return `Verified by ${count} drivers, ${spot.ageText}`;
     case "temporary":
@@ -157,6 +163,7 @@ function freshnessText(spot) {
 }
 
 function sourceText(spot) {
+  if (spot.state === "unreported") return "no reports yet";
   if (spot.state === "temporary" && spot.lastReporter === "passenger") return "one passenger report";
   if (spot.addedBy === "driver" && spot.state === "temporary") return "one driver report";
   return "driver reports";
@@ -192,7 +199,7 @@ function defaultReasonFor(status) {
 /* ---------- State machine ---------- */
 
 const TRANSITIONS = {
-  report: { from: ["reported", "temporary", "verified", "corrected", "expired"], to: "temporary" },
+  report: { from: ["unreported", "reported", "temporary", "verified", "corrected", "expired"], to: "temporary" },
   verify: { from: ["temporary"], to: "verified" },
   correct: { from: ["verified"], to: "corrected" },
   expire: { from: ["reported", "temporary", "verified", "corrected"], to: "expired" },
@@ -306,12 +313,14 @@ function renderMap() {
   const selected = selectedSpot();
   const chosen = getSpot(ui.chosenAlternativeId) || getSpot(ui.driverSuggested);
   const showStatusPins = role === "driver" || ui.screen !== "search";
+  const hidePickup = role === "passenger" && ui.screen === "locate";
 
   state.spots.forEach((spot) => {
     if (!validCoords(spot.coordinates)) return;
-    const isPickup = selected && spot.id === selected.id;
+    const isPickup = !hidePickup && selected && spot.id === selected.id;
     const isChosen = chosen && spot.id === chosen.id;
     if (!showStatusPins && !isPickup) return;
+    if (spot.custom && !isPickup) return;
     const eta = isPickup || isChosen ? spot.driverEta : null;
     const marker = L.marker(spot.coordinates, {
       icon: pinIcon(spot, { pickup: isPickup, chosen: isChosen, eta }),
@@ -398,9 +407,162 @@ map.on("click", (event) => {
   openReport({ mode: "suggest", actor: "driver", pending: true });
 });
 
+/* ---------- Locate screen (drag the map under a fixed pin) ---------- */
+
+function pinPoint() {
+  const phone = $("#phone");
+  return L.point(phone.clientWidth / 2, Math.round(phone.clientHeight * 0.4));
+}
+
+function centreCoords() {
+  const latlng = map.containerPointToLatLng(pinPoint());
+  return [Number(latlng.lat.toFixed(5)), Number(latlng.lng.toFixed(5))];
+}
+
+function resolveCentre() {
+  const coords = centreCoords();
+  const nearest = nearestSpot(coords);
+  return { coords, nearest, inside: inBounds(coords) };
+}
+
+function locateStatusLine(resolved) {
+  if (!resolved.inside) return "Move the pin back into the city centre";
+  if (resolved.nearest && resolved.nearest.distance <= SNAP_METRES) return `Pin at ${resolved.nearest.spot.name}`;
+  if (resolved.nearest && resolved.nearest.distance <= 600) return `Pin ${Math.round(resolved.nearest.distance)} m from ${resolved.nearest.spot.name}`;
+  return "Pin in the Brisbane CBD";
+}
+
+function locateTemplate() {
+  const resolved = resolveCentre();
+  return `
+    <header class="sheet-header centred">
+      <h1>Set your pickup spot</h1>
+      <p class="muted">Drag map to move pin</p>
+      <p class="locate-status" id="locate-status">${escapeHtml(locateStatusLine(resolved))}</p>
+    </header>
+    <button class="locate-field" type="button" id="locate-search" aria-label="Search for a pickup location">
+      <span class="locate-glyph"></span>
+      <span class="locate-placeholder">Where should we pick you up?</span>
+      <i data-lucide="search"></i>
+    </button>
+    <div class="actions">
+      <button class="button primary" type="button" id="locate-confirm" ${resolved.inside ? "" : "disabled"}>Confirm pickup spot</button>
+    </div>`;
+}
+
+function removeCustomPins() {
+  state.spots = state.spots.filter((spot) => !spot.custom);
+}
+
+function confirmCentre() {
+  const resolved = resolveCentre();
+  if (!resolved.inside) {
+    showToast("Outside the study area", "Move the pin back into the Brisbane CBD.");
+    return;
+  }
+  removeCustomPins();
+  if (resolved.nearest && resolved.nearest.distance <= SNAP_METRES) {
+    placePin(resolved.nearest.spot.id, resolved.nearest.spot.name, "map");
+    return;
+  }
+  const nearest = resolved.nearest;
+  const pin = {
+    id: `pin-${Date.now()}`,
+    name: "Dropped pin",
+    address: nearest ? `${Math.round(nearest.distance)} m from ${nearest.spot.name}` : "Brisbane CBD",
+    coordinates: resolved.coords,
+    status: "unknown",
+    state: "unreported",
+    reason: "No driver reports for this exact kerb yet",
+    reportCount: 0,
+    ageText: "",
+    driverEta: nearest ? nearest.spot.driverEta + 1 : 6,
+    stepFree: true,
+    reports: [],
+    addedBy: "passenger",
+    lastReporter: null,
+    custom: true,
+  };
+  state.spots.push(pin);
+  placePin(pin.id, "Dropped pin", "map");
+}
+
+let locateMoveTimer = null;
+map.on("moveend", () => {
+  if (state.session.role !== "passenger" || state.ui.screen !== "locate") return;
+  const resolved = resolveCentre();
+  state.ui.mapCenter = [map.getCenter().lat, map.getCenter().lng, map.getZoom()];
+  const line = $("#locate-status");
+  if (line) line.textContent = locateStatusLine(resolved);
+  const confirm = $("#locate-confirm");
+  if (confirm) confirm.disabled = !resolved.inside;
+  window.clearTimeout(locateMoveTimer);
+  locateMoveTimer = window.setTimeout(() => {
+    log("map_moved", {
+      coordinates: resolved.coords,
+      nearest_spot_id: resolved.nearest ? resolved.nearest.spot.id : null,
+      nearest_distance_m: resolved.nearest ? Math.round(resolved.nearest.distance) : null,
+      inside_area: resolved.inside,
+    });
+    persist();
+  }, 400);
+});
+
+/* ---------- Device location (used only to start the map, never logged) ---------- */
+
+const userLayer = L.layerGroup().addTo(map);
+
+function renderUserPosition() {
+  userLayer.clearLayers();
+  const position = state.ui.userPosition;
+  if (!position || state.session.role !== "passenger") return;
+  const [lat, lng, accuracy] = position;
+  if (accuracy && accuracy < 400) {
+    L.circle([lat, lng], { radius: accuracy, color: "#2f6df6", weight: 1, opacity: 0.5, fillColor: "#2f6df6", fillOpacity: 0.12, interactive: false }).addTo(userLayer);
+  }
+  L.marker([lat, lng], {
+    icon: L.divIcon({ className: "pin-shell", html: '<div class="user-dot"></div>', iconSize: [0, 0], iconAnchor: [0, 0] }),
+    interactive: false,
+    keyboard: false,
+  }).addTo(userLayer);
+}
+
+function requestUserPosition(options = {}) {
+  const { recenter = true, manual = false } = options;
+  if (state.session.role !== "passenger") return;
+  if (!navigator.geolocation) {
+    log("geolocation_result", { status: "unavailable", manual });
+    if (manual) showToast("Location unavailable", "This browser does not offer location services.");
+    return;
+  }
+  state.ui.gpsAttempted = true;
+  navigator.geolocation.getCurrentPosition(
+    (position) => {
+      const coords = [Number(position.coords.latitude.toFixed(5)), Number(position.coords.longitude.toFixed(5)), Math.round(position.coords.accuracy || 0)];
+      const inside = inBounds([coords[0], coords[1]]);
+      state.ui.userPosition = coords;
+      renderUserPosition();
+      log("geolocation_result", { status: "granted", inside_area: inside, accuracy_band: coords[2] < 50 ? "under_50m" : coords[2] < 200 ? "under_200m" : "over_200m", manual });
+      if (recenter && inside) {
+        map.setView([coords[0], coords[1]], 17, { animate: manual });
+      } else if (!inside) {
+        showToast("Outside the study area", "Showing the Brisbane CBD instead of your location.");
+        if (manual) map.setView(CBD_CENTER, 16, { animate: true });
+      }
+      persist();
+    },
+    (error) => {
+      const status = error.code === 1 ? "denied" : error.code === 3 ? "timeout" : "unavailable";
+      log("geolocation_result", { status, manual });
+      if (manual) showToast("Location not available", status === "denied" ? "Location permission was refused." : "Could not get a position. Drag the map instead.");
+    },
+    { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 },
+  );
+}
+
 /* ---------- Bottom sheet ---------- */
 
-const SHEET_LEVELS = { peek: 0.36, half: 0.6, full: 0.92 };
+const SHEET_LEVELS = { peek: 0.38, half: 0.6, full: 0.92 };
 let sheetLevel = "half";
 let dragging = null;
 
@@ -729,7 +891,7 @@ function driverTemplate() {
 
 function searchGazetteer(query) {
   const spotsAsEntries = state.spots
-    .filter((spot) => validCoords(spot.coordinates))
+    .filter((spot) => validCoords(spot.coordinates) && !spot.custom)
     .map((spot) => ({ name: spot.name, address: spot.address, spotId: spot.id }));
   const entries = [...GAZETTEER, ...spotsAsEntries.filter((entry) => !GAZETTEER.some((g) => g.name === entry.name))];
   if (!query) return entries;
@@ -973,6 +1135,7 @@ function loadScenario(scenarioId, participantId, variant, orderPosition, options
     scenarioId: scenario.id,
     variant: scenario.role === "passenger" ? variant || scenario.variant : "n/a",
     orderPosition: Number(orderPosition) || 1,
+    useGps: state.session.useGps !== false,
   };
   resetSpotsForScenario();
   log("scenario_started", {
@@ -995,6 +1158,8 @@ function loadScenario(scenarioId, participantId, variant, orderPosition, options
       setSheet("half");
     } else {
       map.setView(CBD_CENTER, 16);
+      setSheet("peek");
+      if (state.session.useGps) requestUserPosition({ recenter: true });
     }
   }
 }
@@ -1010,7 +1175,7 @@ function switchView(role) {
     ui.screen = "driver";
     if (!ui.selectedSpotId) ui.selectedSpotId = state.scenario.presetSpot;
   } else {
-    ui.screen = ui.selectedSpotId ? "pickup" : "search";
+    ui.screen = ui.selectedSpotId ? "pickup" : "locate";
     ui.suggestionsOpen = true;
   }
   log("view_switched", { view: role, spot_id: ui.selectedSpotId });
@@ -1030,7 +1195,7 @@ function resetSpotsForScenario() {
     state.ui.selectedSpotId = scenario.presetSpot;
     if (scenario.driverScreen === "accepted-alternative") state.ui.chosenAlternativeId = scenario.alternativeSpot;
   } else {
-    state.ui.screen = scenario.entry === "preset" ? "pickup" : "search";
+    state.ui.screen = scenario.entry === "preset" ? "pickup" : "locate";
     state.ui.selectedSpotId = scenario.entry === "preset" ? scenario.presetSpot : null;
     state.ui.suggestionsOpen = Boolean(scenario.suggestionsExpanded);
   }
@@ -1048,6 +1213,7 @@ function renderFacilitator() {
     $("#fac-variant").value = state.session.variant === "unexplained" ? "unexplained" : "explained";
     $("#fac-order").value = String(state.session.orderPosition || 1);
     $("#fac-pid").value = state.session.participantId;
+    $("#fac-gps").checked = state.session.useGps !== false;
     $("#fac-break").innerHTML = BREAK_CONDITIONS.map((condition) => `<option value="${condition}">${condition}</option>`).join("");
   }
   const chosen = facilitatorSelectedScenario();
@@ -1102,6 +1268,11 @@ function initFacilitator() {
     const chosen = facilitatorSelectedScenario();
     $("#fac-variant").value = chosen.variant === "unexplained" ? "unexplained" : "explained";
     renderFacilitator();
+  });
+  $("#fac-gps").addEventListener("change", () => {
+    state.session.useGps = $("#fac-gps").checked;
+    log("gps_setting_changed", { enabled: state.session.useGps });
+    render();
   });
   $("#fac-load").addEventListener("click", () => {
     loadScenario($("#fac-scenario").value, $("#fac-pid").value.trim(), $("#fac-variant").value, $("#fac-order").value);
@@ -1191,6 +1362,12 @@ function render() {
 
   renderMap();
 
+  const centrePin = $("#centre-pin");
+  centrePin.hidden = !(role === "passenger" && ui.screen === "locate");
+  centrePin.style.top = `${pinPoint().y}px`;
+  $("#locate-me").hidden = !(role === "passenger" && state.session.useGps && ui.screen !== "search");
+  renderUserPosition();
+
   if (role === "passenger" && ui.screen === "search") {
     search.hidden = false;
     sheet.hidden = true;
@@ -1203,7 +1380,9 @@ function render() {
     hint.hidden = !(role === "driver" && ui.driverAddMode);
     back.hidden = !((role === "passenger" && ui.screen === "pickup" && state.scenario.entry === "search") || (role === "driver" && ui.driverAddMode));
     const body = $("#sheet-body");
-    if (role === "driver") {
+    if (role === "passenger" && ui.screen === "locate") {
+      body.innerHTML = locateTemplate();
+    } else if (role === "driver") {
       body.innerHTML = driverTemplate();
     } else if (ui.screen === "confirmed") {
       body.innerHTML = passengerConfirmedTemplate(selectedSpot());
@@ -1224,6 +1403,13 @@ function bindSheetHandlers() {
     const el = $(selector);
     if (el) el.addEventListener("click", handler);
   };
+  on("#locate-search", () => {
+    state.ui.screen = "search";
+    log("search_opened", { from: "locate" });
+    render();
+    $("#search-input").focus();
+  });
+  on("#locate-confirm", confirmCentre);
   on("#toggle-suggestions", () => toggleSuggestions());
   on("#open-suggestions", () => toggleSuggestions(true));
   $$("[data-alt]").forEach((button) => button.addEventListener("click", () => chooseAlternative(button.dataset.alt)));
@@ -1433,6 +1619,12 @@ function applyUrlParams() {
   return false;
 }
 
+function applyGpsParam() {
+  const value = new URLSearchParams(window.location.search).get("gps");
+  if (value === null) return;
+  state.session.useGps = !["0", "false", "off", "no"].includes(value.toLowerCase());
+}
+
 function boot() {
   initSheetDrag();
   initFacilitator();
@@ -1445,6 +1637,9 @@ function boot() {
   });
   $("#search-back").addEventListener("click", () => {
     $("#search-input").blur();
+    state.ui.screen = "locate";
+    render();
+    setSheet("peek");
   });
   $("#back-button").addEventListener("click", () => {
     if (state.session.role === "driver") {
@@ -1453,13 +1648,14 @@ function boot() {
       render();
       return;
     }
-    state.ui.screen = "search";
+    removeCustomPins();
+    state.ui.screen = "locate";
     state.ui.selectedSpotId = null;
     state.ui.chosenAlternativeId = null;
     state.ui.overridePending = false;
     log("pin_removed", {});
     render();
-    map.setView(CBD_CENTER, 16);
+    setSheet("peek");
   });
   $("#report-form").addEventListener("submit", handleReportSubmit);
   $("#report-close").addEventListener("click", () => closeReport(true));
@@ -1480,6 +1676,7 @@ function boot() {
   });
 
   const restored = restore();
+  applyGpsParam();
   const loadedFromUrl = applyUrlParams();
   if (!loadedFromUrl) {
     if (!restored) {
@@ -1490,10 +1687,15 @@ function boot() {
     const selected = selectedSpot();
     if (state.session.role === "driver") focusPair({ coordinates: DRIVER_POSITION }, selected);
     else if (selected) focusSpot(selected, 17);
+    else if (state.ui.mapCenter) map.setView([state.ui.mapCenter[0], state.ui.mapCenter[1]], state.ui.mapCenter[2] || 16, { animate: false });
     else map.setView(CBD_CENTER, 16);
+    if (state.session.role === "passenger" && state.ui.screen === "locate" && state.session.useGps && !state.ui.mapCenter) {
+      requestUserPosition({ recenter: true });
+    }
   }
+  $("#locate-me").addEventListener("click", () => requestUserPosition({ recenter: true, manual: true }));
   if (["1", "true", "yes"].includes(String(new URLSearchParams(window.location.search).get("facilitator") || "").toLowerCase())) openFacilitator(true);
-  setSheet(state.ui.screen === "confirmed" ? "half" : "half");
+  setSheet(state.session.role === "passenger" && state.ui.screen === "locate" ? "peek" : "half");
   window.setTimeout(() => map.invalidateSize(true), 200);
 }
 

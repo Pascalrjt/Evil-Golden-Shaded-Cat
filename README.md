@@ -12,6 +12,23 @@ python3 -m http.server 4173
 
 Open `http://localhost:4173`. The app renders in a phone-sized frame on a laptop and full screen on a phone.
 
+## Passenger flow
+
+1. **Set your pickup spot.** The map is live under a fixed centre pin. Dragging the map moves the pin.
+   Tapping the search field opens the Plan your ride screen. Tapping "Confirm pickup spot" places the pin:
+   within 150 m of a known spot it snaps to that spot, further away it becomes a dropped pin with
+   "No pickup data for this spot", which still offers suggestions, the keep-my-pin path and reporting.
+2. **Plan your ride.** Offline search over the gazetteer. Choosing a result places the pin.
+3. **Confirm your pickup spot.** Status, reason, freshness, suggestions, override and report.
+4. **Pickup confirmed.** Scripted driver acknowledgement.
+
+Scenarios with a preset pin (Row 4, Row 2) skip straight to step 3.
+
+On the first screen the app asks for the device location and, if it is inside the study area, starts the map
+there with a blue dot. Outside the area it shows the CBD. The round locate button re-centres on demand.
+Coordinates are never written to the event log; only whether location was granted and whether it was inside
+the area. Turn it off with the facilitator checkbox or `?gps=0`. Browsers only allow location over HTTPS or localhost.
+
 ## Facilitator controls
 
 The facilitator panel is hidden from participants. Open it with any of:

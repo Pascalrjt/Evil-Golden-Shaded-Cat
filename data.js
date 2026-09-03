@@ -9,6 +9,8 @@ const CBD_BOUNDS = [
   [-27.461, 153.036],
 ];
 const WALK_METRES_PER_MINUTE = 60;
+/* A dropped pin closer than this to a known spot snaps to it. Further away it becomes a pin with no data. */
+const SNAP_METRES = 150;
 /* Fixed simulated driver position (Charlotte Street). Driver position awareness is out of scope. */
 const DRIVER_POSITION = [-27.4738, 153.0265];
 const DRIVER_NAME = "Jordan";
@@ -19,10 +21,11 @@ const STATUS_LABEL = {
   suitable: "Suitable for pickup",
   caution: "Pickup may be difficult",
   blocked: "Pickup not recommended",
+  unknown: "No pickup data for this spot",
 };
 
 /* Lifecycle states handled by the state machine in app.js. */
-const LIFECYCLE = ["reported", "temporary", "verified", "corrected", "expired"];
+const LIFECYCLE = ["unreported", "reported", "temporary", "verified", "corrected", "expired"];
 
 const SPOT_FIXTURE = [
   {

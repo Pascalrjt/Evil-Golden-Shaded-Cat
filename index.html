@@ -15,11 +15,16 @@
     <link rel="preconnect" href="https://unpkg.com" />
     <link rel="preconnect" href="https://tile.openstreetmap.org" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <link rel="stylesheet" href="styles.css?v=5" />
+    <link rel="stylesheet" href="styles.css?v=7" />
   </head>
   <body>
     <div class="phone" id="phone">
       <div id="map" class="map" aria-label="Pickup map"></div>
+      <div class="centre-pin" id="centre-pin" hidden aria-hidden="true">
+        <span class="centre-pin-head"></span>
+        <span class="centre-pin-stem"></span>
+        <span class="centre-pin-foot"></span>
+      </div>
 
       <div class="top-bar" id="top-bar">
         <button class="round-button" id="back-button" type="button" aria-label="Back" hidden>
@@ -27,6 +32,9 @@
         </button>
         <span class="top-spacer"></span>
         <button class="app-badge" id="app-badge" type="button" aria-label="Pickup Pilot">Pickup Pilot</button>
+        <button class="round-button" id="locate-me" type="button" aria-label="Use my location" hidden>
+          <i data-lucide="locate-fixed"></i>
+        </button>
       </div>
 
       <section class="screen search-screen" id="search-screen" hidden aria-label="Plan your ride">
@@ -114,6 +122,10 @@
               </select>
             </label>
           </div>
+          <label class="fac-check">
+            <input id="fac-gps" type="checkbox" checked />
+            <span>Use device GPS for the start position (passenger, inside the study area only). Coordinates are never logged.</span>
+          </label>
           <div class="fac-actions">
             <button class="button primary" id="fac-load" type="button">Load scenario</button>
             <button class="button secondary" id="fac-reset" type="button">Reset spots</button>
@@ -192,8 +204,8 @@
       crossorigin=""
     ></script>
     <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
-    <script src="data.js?v=5"></script>
-    <script src="log.js?v=5"></script>
-    <script src="app.js?v=5"></script>
+    <script src="data.js?v=7"></script>
+    <script src="log.js?v=7"></script>
+    <script src="app.js?v=7"></script>
   </body>
 </html>
