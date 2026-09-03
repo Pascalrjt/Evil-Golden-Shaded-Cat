@@ -25,7 +25,7 @@ Open `http://localhost:4173`. The app renders in a phone-sized frame on a laptop
 Scenarios with a preset pin (Row 4, Row 2) skip straight to step 3.
 
 On the first screen the app asks for the device location and, if it is inside the study area, starts the map
-there with a blue dot. Outside the area it shows the CBD. The round locate button re-centres on demand.
+there with a blue dot. Outside the area it falls back to Hungry Jack's on Queen Street. The round locate button re-centres on demand.
 Coordinates are never written to the event log; only whether location was granted and whether it was inside
 the area. Turn it off with the facilitator checkbox or `?gps=0`. Browsers only allow location over HTTPS or localhost.
 

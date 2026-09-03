@@ -318,15 +318,6 @@ h2 {
   background: #ffffff;
 }
 
-.centre-pin-foot {
-  width: 22px;
-  height: 22px;
-  border: 5px solid #ffffff;
-  border-radius: 50%;
-  background: #2f6df6;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6);
-}
-
 .sheet-header.centred {
   text-align: center;
 }
@@ -406,6 +397,18 @@ h2 {
 .round-button svg {
   width: 22px;
   height: 22px;
+}
+
+.map-locate-button {
+  position: absolute;
+  z-index: 5;
+  right: 16px;
+  bottom: calc(var(--sheet-height, 60%) + 16px);
+  transition: bottom 240ms ease;
+}
+
+.phone.sheet-dragging .map-locate-button {
+  transition: none;
 }
 
 .user-dot {

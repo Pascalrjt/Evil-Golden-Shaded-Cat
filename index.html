@@ -15,7 +15,7 @@
     <link rel="preconnect" href="https://unpkg.com" />
     <link rel="preconnect" href="https://tile.openstreetmap.org" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <link rel="stylesheet" href="styles.css?v=7" />
+    <link rel="stylesheet" href="styles.css?v=9" />
   </head>
   <body>
     <div class="phone" id="phone">
@@ -23,7 +23,6 @@
       <div class="centre-pin" id="centre-pin" hidden aria-hidden="true">
         <span class="centre-pin-head"></span>
         <span class="centre-pin-stem"></span>
-        <span class="centre-pin-foot"></span>
       </div>
 
       <div class="top-bar" id="top-bar">
@@ -32,10 +31,11 @@
         </button>
         <span class="top-spacer"></span>
         <button class="app-badge" id="app-badge" type="button" aria-label="Pickup Pilot">Pickup Pilot</button>
-        <button class="round-button" id="locate-me" type="button" aria-label="Use my location" hidden>
-          <i data-lucide="locate-fixed"></i>
-        </button>
       </div>
+
+      <button class="round-button map-locate-button" id="locate-me" type="button" aria-label="Use my location" hidden>
+        <i data-lucide="locate-fixed"></i>
+      </button>
 
       <section class="screen search-screen" id="search-screen" hidden aria-label="Plan your ride">
         <header class="screen-header">

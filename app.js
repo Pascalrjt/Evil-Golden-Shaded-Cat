@@ -540,14 +540,14 @@ function requestUserPosition(options = {}) {
     (position) => {
       const coords = [Number(position.coords.latitude.toFixed(5)), Number(position.coords.longitude.toFixed(5)), Math.round(position.coords.accuracy || 0)];
       const inside = inBounds([coords[0], coords[1]]);
-      state.ui.userPosition = coords;
+      state.ui.userPosition = inside ? coords : [...DEFAULT_GPS_POSITION, 0];
       renderUserPosition();
       log("geolocation_result", { status: "granted", inside_area: inside, accuracy_band: coords[2] < 50 ? "under_50m" : coords[2] < 200 ? "under_200m" : "over_200m", manual });
       if (recenter && inside) {
         map.setView([coords[0], coords[1]], 17, { animate: manual });
       } else if (!inside) {
-        showToast("Outside the study area", "Showing the Brisbane CBD instead of your location.");
-        if (manual) map.setView(CBD_CENTER, 16, { animate: true });
+        showToast("Outside the study area", "Showing Hungry Jack's on Queen Street instead of your location.");
+        if (recenter) map.setView(DEFAULT_GPS_POSITION, 17, { animate: manual });
       }
       persist();
     },
@@ -569,7 +569,9 @@ let dragging = null;
 function setSheet(level) {
   sheetLevel = level;
   const phoneHeight = $("#phone").clientHeight;
-  $("#sheet").style.height = `${Math.round(phoneHeight * SHEET_LEVELS[level])}px`;
+  const sheetHeight = Math.round(phoneHeight * SHEET_LEVELS[level]);
+  $("#sheet").style.height = `${sheetHeight}px`;
+  $("#phone").style.setProperty("--sheet-height", `${sheetHeight}px`);
   window.setTimeout(() => map.invalidateSize(), 240);
 }
 
@@ -579,6 +581,7 @@ function initSheetDrag() {
   handle.addEventListener("pointerdown", (event) => {
     dragging = { startY: event.clientY, startHeight: sheet.getBoundingClientRect().height, moved: false };
     sheet.classList.add("dragging");
+    $("#phone").classList.add("sheet-dragging");
     handle.setPointerCapture(event.pointerId);
   });
   handle.addEventListener("pointermove", (event) => {
@@ -588,12 +591,14 @@ function initSheetDrag() {
     const phoneHeight = $("#phone").clientHeight;
     const next = Math.min(phoneHeight * 0.95, Math.max(phoneHeight * 0.2, dragging.startHeight + delta));
     sheet.style.height = `${next}px`;
+    $("#phone").style.setProperty("--sheet-height", `${next}px`);
   });
   const finish = () => {
     if (!dragging) return;
     const phoneHeight = $("#phone").clientHeight;
     const ratio = sheet.getBoundingClientRect().height / phoneHeight;
     sheet.classList.remove("dragging");
+    $("#phone").classList.remove("sheet-dragging");
     if (!dragging.moved) {
       setSheet(sheetLevel === "full" ? "half" : "full");
     } else {

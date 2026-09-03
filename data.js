@@ -3,6 +3,8 @@
    and every value below stands in for data the study does not need to be real. */
 
 const CBD_CENTER = [-27.4698, 153.0251];
+/* Fallback shown when the device location is outside the study area (Hungry Jack's, Queen Street Mall). */
+const DEFAULT_GPS_POSITION = [-27.469807, 153.025242];
 /* South-west and north-east corners of the bounded study area. */
 const CBD_BOUNDS = [
   [-27.479, 153.013],
