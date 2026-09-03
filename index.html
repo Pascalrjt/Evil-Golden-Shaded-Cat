@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+    <meta
+      name="description"
+      content="A passenger and driver prototype for safer, explainable ride-hail pickup points."
+    />
+    <title>Pickup Pilot</title>
+    <link rel="preconnect" href="https://unpkg.com" />
+    <link rel="preconnect" href="https://tile.openstreetmap.org" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="styles.css?v=11" />
+  </head>
+  <body>
+    <div class="phone" id="phone">
+      <div id="map" class="map" aria-label="Pickup map"></div>
+      <div class="centre-pin" id="centre-pin" hidden aria-hidden="true">
+        <span class="centre-pin-head"></span>
+        <span class="centre-pin-stem"></span>
+      </div>
+
+      <div class="top-bar" id="top-bar">
+        <button class="round-button" id="back-button" type="button" aria-label="Back" hidden>
+          <i data-lucide="arrow-left"></i>
+        </button>
+        <span class="top-spacer"></span>
+        <button class="app-badge" id="app-badge" type="button" aria-label="Pickup Pilot">Pickup Pilot</button>
+      </div>
+
+      <button class="round-button map-locate-button" id="locate-me" type="button" aria-label="Use my location" hidden>
+        <i data-lucide="locate-fixed"></i>
+      </button>
+
+      <section class="sheet" id="sheet" aria-live="polite">
+        <div class="sheet-handle" id="sheet-handle" role="button" aria-label="Resize panel" tabindex="0"><span></span></div>
+        <div class="sheet-body" id="sheet-body"></div>
+      </section>
+
+      <div class="map-hint" id="add-pin-hint" hidden>
+        <i data-lucide="map-pin-plus"></i>
+        <span>Tap the map where the pickup spot is</span>
+      </div>
+
+      <section class="facilitator" id="facilitator" hidden aria-label="Facilitator controls">
+        <header class="facilitator-header">
+          <div>
+            <p class="eyebrow">Hidden from participants</p>
+            <h2>Facilitator</h2>
+          </div>
+          <button class="icon-button" id="facilitator-close" type="button" aria-label="Close facilitator panel">
+            <i data-lucide="x"></i>
+          </button>
+        </header>
+
+        <div class="fac-section">
+          <h3>Session</h3>
+          <label class="fac-field">
+            <span>Participant ID</span>
+            <input id="fac-pid" type="text" placeholder="P07 or D03" autocomplete="off" />
+          </label>
+          <label class="fac-field">
+            <span>Scenario</span>
+            <select id="fac-scenario"></select>
+          </label>
+          <p class="fac-task" id="fac-task"></p>
+          <div class="fac-grid">
+            <label class="fac-field">
+              <span>Variant</span>
+              <select id="fac-variant">
+                <option value="explained">explained</option>
+                <option value="unexplained">unexplained</option>
+              </select>
+            </label>
+            <label class="fac-field">
+              <span>Order position</span>
+              <select id="fac-order">
+                <option value="1">1</option>
+                <option value="2">2</option>
+              </select>
+            </label>
+          </div>
+          <label class="fac-check">
+            <input id="fac-gps" type="checkbox" checked />
+            <span>Use device GPS for the start position (passenger, inside the study area only). Coordinates are never logged.</span>
+          </label>
+          <div class="fac-actions">
+            <button class="button primary" id="fac-load" type="button">Load scenario</button>
+            <button class="button secondary" id="fac-reset" type="button">Reset spots</button>
+          </div>
+          <p class="fac-meta" id="fac-session-summary"></p>
+          <button class="button secondary fac-wide" id="fac-switch" type="button">Show driver view (keep spots)</button>
+          <p class="fac-meta">Switching the view keeps the spot states so both views can be compared. Loading a scenario resets them.</p>
+        </div>
+
+        <div class="fac-section">
+          <h3>Spot states</h3>
+          <div class="fac-spots" id="fac-spots"></div>
+        </div>
+
+        <div class="fac-section">
+          <h3>Break condition</h3>
+          <div class="fac-inline">
+            <select id="fac-break"></select>
+            <button class="button secondary" id="fac-break-apply" type="button">Apply</button>
+          </div>
+          <p class="fac-meta">Marks the log. "reload" reloads the page. "bad_location_data" removes the pin's coordinates.</p>
+        </div>
+
+        <div class="fac-section">
+          <h3>Event log</h3>
+          <p class="fac-meta" id="fac-log-count"></p>
+          <div class="fac-actions">
+            <button class="button secondary" id="fac-export-json" type="button">Export JSON</button>
+            <button class="button secondary" id="fac-export-csv" type="button">Export CSV</button>
+            <button class="button secondary" id="fac-share" type="button">Share</button>
+            <button class="button danger" id="fac-clear" type="button">Clear log</button>
+          </div>
+          <ol class="fac-log" id="fac-log-tail"></ol>
+          <p class="fac-meta">Export at the end of every session, save to the team OneDrive, then clear.</p>
+        </div>
+
+        <p class="fac-hint">Open with Ctrl+Shift+F, the URL parameter ?facilitator=1, or five quick taps on the app name.</p>
+      </section>
+
+      <div class="dialog-backdrop" id="dialog-backdrop" hidden></div>
+      <dialog id="report-dialog" class="report-dialog">
+        <form id="report-form" method="dialog">
+          <div class="sheet-handle static"><span></span></div>
+          <header class="dialog-header">
+            <div>
+              <p class="eyebrow" id="report-eyebrow">Report a condition</p>
+              <h2 id="report-title">What is happening here?</h2>
+            </div>
+            <button class="icon-button" id="report-close" type="button" aria-label="Close report form">
+              <i data-lucide="x"></i>
+            </button>
+          </header>
+          <p class="dialog-context" id="report-location"></p>
+          <label class="field" id="report-name-field" hidden>
+            <span>Name this spot</span>
+            <input id="report-name" type="text" maxlength="40" placeholder="For example, Charlotte St taxi rank" autocomplete="off" />
+          </label>
+          <div class="report-options" id="report-options" role="radiogroup" aria-label="Reason"></div>
+          <label class="field">
+            <span>Short note <small>Optional</small></span>
+            <textarea id="report-note" rows="2" maxlength="140" placeholder="A useful detail for the next passenger or driver"></textarea>
+          </label>
+          <footer class="dialog-footer">
+            <p><i data-lucide="clock-3"></i>New reports start as temporary until other drivers verify them.</p>
+            <button class="button primary" id="report-submit" type="submit">Submit report</button>
+          </footer>
+        </form>
+      </dialog>
+
+      <div class="toast-region" id="toast-region" aria-live="assertive" aria-atomic="true"></div>
+    </div>
+
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+    <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+    <script src="data.js?v=8"></script>
+    <script src="log.js?v=7"></script>
+    <script src="app.js?v=9"></script>
+  </body>
+</html>

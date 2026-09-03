@@ -1,0 +1,11 @@
+# Session logs exported by the facilitator. Never commit participant data.
+exports/
+*.log.json
+*.log.csv
+
+# Hosting
+.vercel/
+
+# OS and editor noise
+.DS_Store
+Thumbs.db
