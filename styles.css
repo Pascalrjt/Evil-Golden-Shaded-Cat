@@ -1174,32 +1174,23 @@ h2 {
   font-size: 13px;
 }
 
-/* ---------- Search screen ---------- */
+/* ---------- Expanded plan-your-ride section ---------- */
 
-.screen {
-  position: absolute;
-  inset: 0;
-  z-index: 8;
+.plan-ride {
   display: flex;
   flex-direction: column;
-  padding: calc(var(--safe-top) + 8px) 16px calc(16px + var(--safe-bottom));
-  background: var(--bg);
+  min-height: 100%;
 }
 
-.screen[hidden] {
-  display: none;
-}
-
-.screen-header {
-  display: grid;
-  grid-template-columns: 44px 1fr 44px;
+.plan-ride-header {
+  display: flex;
   align-items: center;
+  justify-content: space-between;
   margin-bottom: 18px;
 }
 
-.screen-header h1 {
+.plan-ride-header h2 {
   font-size: 22px;
-  text-align: center;
 }
 
 .icon-button {

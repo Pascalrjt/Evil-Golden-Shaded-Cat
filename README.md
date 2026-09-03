@@ -15,7 +15,7 @@ Open `http://localhost:4173`. The app renders in a phone-sized frame on a laptop
 ## Passenger flow
 
 1. **Set your pickup spot.** The map is live under a fixed centre pin. Dragging the map moves the pin.
-   Tapping the search field opens the Plan your ride screen. Tapping "Confirm pickup spot" places the pin:
+   Tapping the search field or expanding the sheet reveals Plan your ride inside the pickup sheet. Tapping "Confirm pickup spot" places the pin:
    within 150 m of a known spot it snaps to that spot, further away it becomes a dropped pin with
    "No pickup data for this spot", which still offers suggestions, the keep-my-pin path and reporting.
 2. **Plan your ride.** Offline search over the gazetteer. Choosing a result places the pin.
@@ -74,7 +74,7 @@ Not built: citywide coverage, legality data, live sync, accounts, moderation, ra
 
 ## Files
 
-- `index.html` shell, search screen, facilitator panel, report dialog
+- `index.html` shell, facilitator panel, report dialog
 - `styles.css` dark ride-hail styling and the phone frame
 - `data.js` spots, gazetteer, report reasons and the scenario table
 - `log.js` event log with localStorage mirror and export

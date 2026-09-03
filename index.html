@@ -15,7 +15,7 @@
     <link rel="preconnect" href="https://unpkg.com" />
     <link rel="preconnect" href="https://tile.openstreetmap.org" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <link rel="stylesheet" href="styles.css?v=9" />
+    <link rel="stylesheet" href="styles.css?v=11" />
   </head>
   <body>
     <div class="phone" id="phone">
@@ -36,43 +36,6 @@
       <button class="round-button map-locate-button" id="locate-me" type="button" aria-label="Use my location" hidden>
         <i data-lucide="locate-fixed"></i>
       </button>
-
-      <section class="screen search-screen" id="search-screen" hidden aria-label="Plan your ride">
-        <header class="screen-header">
-          <button class="icon-button" id="search-back" type="button" aria-label="Close search">
-            <i data-lucide="arrow-left"></i>
-          </button>
-          <h1>Plan your ride</h1>
-          <span class="icon-spacer"></span>
-        </header>
-        <div class="chip-row">
-          <button class="chip" type="button"><i data-lucide="clock-3"></i>Pick up now<i data-lucide="chevron-down"></i></button>
-          <button class="chip" type="button"><i data-lucide="user-round"></i>For me<i data-lucide="chevron-down"></i></button>
-        </div>
-        <div class="route-fields">
-          <div class="route-glyphs" aria-hidden="true">
-            <span class="glyph-dot"></span>
-            <span class="glyph-line"></span>
-            <span class="glyph-square"></span>
-          </div>
-          <div class="route-inputs">
-            <input
-              id="search-input"
-              type="search"
-              placeholder="Pickup location"
-              autocomplete="off"
-              autocapitalize="off"
-              spellcheck="false"
-              aria-label="Pickup location"
-            />
-            <div class="route-static" id="destination-field">Brisbane Airport</div>
-          </div>
-          <button class="icon-button" id="search-clear" type="button" aria-label="Clear pickup location">
-            <i data-lucide="circle-x"></i>
-          </button>
-        </div>
-        <ul class="result-list" id="search-results" aria-label="Pickup suggestions"></ul>
-      </section>
 
       <section class="sheet" id="sheet" aria-live="polite">
         <div class="sheet-handle" id="sheet-handle" role="button" aria-label="Resize panel" tabindex="0"><span></span></div>
@@ -204,8 +167,8 @@
       crossorigin=""
     ></script>
     <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
-    <script src="data.js?v=7"></script>
+    <script src="data.js?v=8"></script>
     <script src="log.js?v=7"></script>
-    <script src="app.js?v=7"></script>
+    <script src="app.js?v=9"></script>
   </body>
 </html>

@@ -17,6 +17,7 @@ const state = {
 function defaultUi() {
   return {
     screen: "locate",
+    locateExpanded: false,
     selectedSpotId: null,
     mapCenter: null,
     userPosition: null,
@@ -64,6 +65,10 @@ function restore() {
     state.scenario = getScenario(saved.scenarioId);
     state.spots = saved.spots;
     state.ui = { ...defaultUi(), ...saved.ui };
+    if (state.ui.screen === "search") {
+      state.ui.screen = "locate";
+      state.ui.locateExpanded = true;
+    }
     return true;
   } catch (error) {
     return false;
@@ -434,6 +439,7 @@ function locateStatusLine(resolved) {
 
 function locateTemplate() {
   const resolved = resolveCentre();
+  if (state.ui.locateExpanded) return planRideTemplate();
   return `
     <header class="sheet-header centred">
       <h1>Set your pickup spot</h1>
@@ -448,6 +454,45 @@ function locateTemplate() {
     <div class="actions">
       <button class="button primary" type="button" id="locate-confirm" ${resolved.inside ? "" : "disabled"}>Confirm pickup spot</button>
     </div>`;
+}
+
+function planRideTemplate() {
+  return `
+    <section class="plan-ride" aria-label="Plan your ride">
+      <header class="plan-ride-header">
+        <h2>Plan your ride</h2>
+        <button class="icon-button" id="collapse-plan" type="button" aria-label="Collapse Plan your ride">
+          <i data-lucide="chevron-down"></i>
+        </button>
+      </header>
+      <div class="chip-row">
+        <button class="chip" type="button"><i data-lucide="clock-3"></i>Pick up now<i data-lucide="chevron-down"></i></button>
+        <button class="chip" type="button"><i data-lucide="user-round"></i>For me<i data-lucide="chevron-down"></i></button>
+      </div>
+      <div class="route-fields">
+        <div class="route-glyphs" aria-hidden="true">
+          <span class="glyph-dot"></span>
+          <span class="glyph-line"></span>
+          <span class="glyph-square"></span>
+        </div>
+        <div class="route-inputs">
+          <input
+            id="search-input"
+            type="search"
+            placeholder="Pickup location"
+            autocomplete="off"
+            autocapitalize="off"
+            spellcheck="false"
+            aria-label="Pickup location"
+          />
+          <div class="route-static">Brisbane Airport</div>
+        </div>
+        <button class="icon-button" id="search-clear" type="button" aria-label="Clear pickup location">
+          <i data-lucide="circle-x"></i>
+        </button>
+      </div>
+      <ul class="result-list" id="search-results" aria-label="Pickup suggestions"></ul>
+    </section>`;
 }
 
 function removeCustomPins() {
@@ -511,6 +556,7 @@ map.on("moveend", () => {
 /* ---------- Device location (used only to start the map, never logged) ---------- */
 
 const userLayer = L.layerGroup().addTo(map);
+const USER_DOT_RADIUS = 9;
 
 function renderUserPosition() {
   userLayer.clearLayers();
@@ -525,6 +571,16 @@ function renderUserPosition() {
     interactive: false,
     keyboard: false,
   }).addTo(userLayer);
+}
+
+function centreMapOnUserPosition(position, options = {}) {
+  const zoom = options.zoom || 17;
+  const locationPoint = map.project([position[0], position[1]], zoom);
+  const mapSize = map.getSize();
+  const gpsMarkerPoint = pinPoint().add(L.point(0, USER_DOT_RADIUS));
+  const viewportCentre = L.point(mapSize.x / 2, mapSize.y / 2);
+  const adjustedCentre = locationPoint.add(viewportCentre.subtract(gpsMarkerPoint));
+  map.setView(map.unproject(adjustedCentre, zoom), zoom, { animate: options.animate === true });
 }
 
 function requestUserPosition(options = {}) {
@@ -543,12 +599,10 @@ function requestUserPosition(options = {}) {
       state.ui.userPosition = inside ? coords : [...DEFAULT_GPS_POSITION, 0];
       renderUserPosition();
       log("geolocation_result", { status: "granted", inside_area: inside, accuracy_band: coords[2] < 50 ? "under_50m" : coords[2] < 200 ? "under_200m" : "over_200m", manual });
-      if (recenter && inside) {
-        map.setView([coords[0], coords[1]], 17, { animate: manual });
-      } else if (!inside) {
+      if (!inside) {
         showToast("Outside the study area", "Showing Hungry Jack's on Queen Street instead of your location.");
-        if (recenter) map.setView(DEFAULT_GPS_POSITION, 17, { animate: manual });
       }
+      if (recenter) centreMapOnUserPosition(state.ui.userPosition, { animate: manual });
       persist();
     },
     (error) => {
@@ -563,6 +617,7 @@ function requestUserPosition(options = {}) {
 /* ---------- Bottom sheet ---------- */
 
 const SHEET_LEVELS = { peek: 0.38, half: 0.6, full: 0.92 };
+const SHEET_TRANSITION_MS = 240;
 let sheetLevel = "half";
 let dragging = null;
 
@@ -572,7 +627,21 @@ function setSheet(level) {
   const sheetHeight = Math.round(phoneHeight * SHEET_LEVELS[level]);
   $("#sheet").style.height = `${sheetHeight}px`;
   $("#phone").style.setProperty("--sheet-height", `${sheetHeight}px`);
-  window.setTimeout(() => map.invalidateSize(), 240);
+  window.setTimeout(() => map.invalidateSize(), SHEET_TRANSITION_MS);
+}
+
+function expandLocateSheet(via) {
+  const wasExpanded = state.ui.locateExpanded;
+  state.ui.locateExpanded = true;
+  if (!wasExpanded) log("search_opened", { from: "locate", via });
+  render();
+  setSheet("full");
+}
+
+function collapseLocateSheet() {
+  state.ui.locateExpanded = false;
+  render();
+  setSheet("peek");
 }
 
 function initSheetDrag() {
@@ -597,21 +666,33 @@ function initSheetDrag() {
     if (!dragging) return;
     const phoneHeight = $("#phone").clientHeight;
     const ratio = sheet.getBoundingClientRect().height / phoneHeight;
+    const isLocateSheet = state.session.role === "passenger" && state.ui.screen === "locate";
     sheet.classList.remove("dragging");
     $("#phone").classList.remove("sheet-dragging");
     if (!dragging.moved) {
-      setSheet(sheetLevel === "full" ? "half" : "full");
+      if (isLocateSheet && state.ui.locateExpanded) collapseLocateSheet();
+      else if (isLocateSheet) expandLocateSheet("sheet_handle");
+      else setSheet(sheetLevel === "full" ? "half" : "full");
     } else {
       const nearest = Object.entries(SHEET_LEVELS).sort((a, b) => Math.abs(a[1] - ratio) - Math.abs(b[1] - ratio))[0][0];
-      setSheet(nearest);
+      if (isLocateSheet && nearest === "peek") collapseLocateSheet();
+      else if (isLocateSheet) expandLocateSheet("sheet_drag");
+      else setSheet(nearest);
     }
     dragging = null;
   };
   handle.addEventListener("pointerup", finish);
   handle.addEventListener("pointercancel", finish);
   handle.addEventListener("keydown", (event) => {
-    if (event.key === "ArrowUp") setSheet("full");
-    if (event.key === "ArrowDown") setSheet("peek");
+    const isLocateSheet = state.session.role === "passenger" && state.ui.screen === "locate";
+    if (event.key === "ArrowUp") {
+      if (isLocateSheet) expandLocateSheet("keyboard");
+      else setSheet("full");
+    }
+    if (event.key === "ArrowDown") {
+      if (isLocateSheet) collapseLocateSheet();
+      else setSheet("peek");
+    }
   });
 }
 
@@ -935,6 +1016,7 @@ function placePin(spotId, label, entry) {
   ui.selectedSpotId = spot.id;
   ui.searchLabel = label || spot.name;
   ui.screen = "pickup";
+  ui.locateExpanded = false;
   ui.chosenAlternativeId = null;
   ui.overridePending = false;
   ui.suggestionsOpen = Boolean(state.scenario.suggestionsExpanded);
@@ -1181,6 +1263,7 @@ function switchView(role) {
     if (!ui.selectedSpotId) ui.selectedSpotId = state.scenario.presetSpot;
   } else {
     ui.screen = ui.selectedSpotId ? "pickup" : "locate";
+    ui.locateExpanded = false;
     ui.suggestionsOpen = true;
   }
   log("view_switched", { view: role, spot_id: ui.selectedSpotId });
@@ -1361,7 +1444,6 @@ function render() {
   const ui = state.ui;
   const role = state.session.role;
   const sheet = $("#sheet");
-  const search = $("#search-screen");
   const back = $("#back-button");
   const hint = $("#add-pin-hint");
 
@@ -1370,32 +1452,23 @@ function render() {
   const centrePin = $("#centre-pin");
   centrePin.hidden = !(role === "passenger" && ui.screen === "locate");
   centrePin.style.top = `${pinPoint().y}px`;
-  $("#locate-me").hidden = !(role === "passenger" && state.session.useGps && ui.screen !== "search");
+  $("#locate-me").hidden = !(role === "passenger" && state.session.useGps && ui.screen === "locate" && !ui.locateExpanded);
   renderUserPosition();
 
-  if (role === "passenger" && ui.screen === "search") {
-    search.hidden = false;
-    sheet.hidden = true;
-    back.hidden = true;
-    hint.hidden = true;
-    renderSearch();
+  sheet.hidden = false;
+  hint.hidden = !(role === "driver" && ui.driverAddMode);
+  back.hidden = !((role === "passenger" && ui.screen === "pickup" && state.scenario.entry === "search") || (role === "driver" && ui.driverAddMode));
+  const body = $("#sheet-body");
+  if (role === "passenger" && ui.screen === "locate") {
+    body.innerHTML = locateTemplate();
+  } else if (role === "driver") {
+    body.innerHTML = driverTemplate();
+  } else if (ui.screen === "confirmed") {
+    body.innerHTML = passengerConfirmedTemplate(selectedSpot());
   } else {
-    search.hidden = true;
-    sheet.hidden = false;
-    hint.hidden = !(role === "driver" && ui.driverAddMode);
-    back.hidden = !((role === "passenger" && ui.screen === "pickup" && state.scenario.entry === "search") || (role === "driver" && ui.driverAddMode));
-    const body = $("#sheet-body");
-    if (role === "passenger" && ui.screen === "locate") {
-      body.innerHTML = locateTemplate();
-    } else if (role === "driver") {
-      body.innerHTML = driverTemplate();
-    } else if (ui.screen === "confirmed") {
-      body.innerHTML = passengerConfirmedTemplate(selectedSpot());
-    } else {
-      body.innerHTML = passengerPickupTemplate(selectedSpot());
-    }
-    bindSheetHandlers();
+    body.innerHTML = passengerPickupTemplate(selectedSpot());
   }
+  bindSheetHandlers();
 
   logRenderEvents();
   renderFacilitator();
@@ -1409,11 +1482,20 @@ function bindSheetHandlers() {
     if (el) el.addEventListener("click", handler);
   };
   on("#locate-search", () => {
-    state.ui.screen = "search";
-    log("search_opened", { from: "locate" });
-    render();
+    expandLocateSheet("search_field");
     $("#search-input").focus();
   });
+  on("#collapse-plan", collapseLocateSheet);
+  const searchInput = $("#search-input");
+  if (searchInput) {
+    searchInput.addEventListener("input", renderSearch);
+    on("#search-clear", () => {
+      searchInput.value = "";
+      searchInput.focus();
+      renderSearch();
+    });
+    renderSearch();
+  }
   on("#locate-confirm", confirmCentre);
   on("#toggle-suggestions", () => toggleSuggestions());
   on("#open-suggestions", () => toggleSuggestions(true));
@@ -1634,18 +1716,6 @@ function boot() {
   initSheetDrag();
   initFacilitator();
 
-  $("#search-input").addEventListener("input", renderSearch);
-  $("#search-clear").addEventListener("click", () => {
-    $("#search-input").value = "";
-    $("#search-input").focus();
-    renderSearch();
-  });
-  $("#search-back").addEventListener("click", () => {
-    $("#search-input").blur();
-    state.ui.screen = "locate";
-    render();
-    setSheet("peek");
-  });
   $("#back-button").addEventListener("click", () => {
     if (state.session.role === "driver") {
       state.ui.driverAddMode = false;
@@ -1655,6 +1725,7 @@ function boot() {
     }
     removeCustomPins();
     state.ui.screen = "locate";
+    state.ui.locateExpanded = false;
     state.ui.selectedSpotId = null;
     state.ui.chosenAlternativeId = null;
     state.ui.overridePending = false;
@@ -1700,7 +1771,7 @@ function boot() {
   }
   $("#locate-me").addEventListener("click", () => requestUserPosition({ recenter: true, manual: true }));
   if (["1", "true", "yes"].includes(String(new URLSearchParams(window.location.search).get("facilitator") || "").toLowerCase())) openFacilitator(true);
-  setSheet(state.session.role === "passenger" && state.ui.screen === "locate" ? "peek" : "half");
+  setSheet(state.session.role === "passenger" && state.ui.screen === "locate" ? (state.ui.locateExpanded ? "full" : "peek") : "half");
   window.setTimeout(() => map.invalidateSize(true), 200);
 }
 
