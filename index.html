@@ -2,7 +2,11 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
     <meta
       name="description"
       content="A passenger and driver prototype for safer, explainable ride-hail pickup points."
@@ -10,307 +14,177 @@
     <title>Pickup Pilot</title>
     <link rel="preconnect" href="https://unpkg.com" />
     <link rel="preconnect" href="https://tile.openstreetmap.org" />
-    <link
-      rel="stylesheet"
-      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    />
-    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="styles.css?v=5" />
   </head>
   <body>
-    <div class="app-shell">
-      <header class="topbar">
-        <a class="brand" href="#" aria-label="Pickup Pilot home">
-          <span class="brand-mark"><i data-lucide="route"></i></span>
-          <span>
-            <strong>Pickup Pilot</strong>
-            <small>Brisbane CBD</small>
-          </span>
-        </a>
+    <div class="phone" id="phone">
+      <div id="map" class="map" aria-label="Pickup map"></div>
 
-        <div class="role-switch" role="group" aria-label="Choose prototype view">
-          <button class="role-button active" type="button" data-role="passenger">
-            <i data-lucide="user-round"></i>
-            Passenger
+      <div class="top-bar" id="top-bar">
+        <button class="round-button" id="back-button" type="button" aria-label="Back" hidden>
+          <i data-lucide="arrow-left"></i>
+        </button>
+        <span class="top-spacer"></span>
+        <button class="app-badge" id="app-badge" type="button" aria-label="Pickup Pilot">Pickup Pilot</button>
+      </div>
+
+      <section class="screen search-screen" id="search-screen" hidden aria-label="Plan your ride">
+        <header class="screen-header">
+          <button class="icon-button" id="search-back" type="button" aria-label="Close search">
+            <i data-lucide="arrow-left"></i>
           </button>
-          <button class="role-button" type="button" data-role="driver">
-            <i data-lucide="car-front"></i>
-            Driver
+          <h1>Plan your ride</h1>
+          <span class="icon-spacer"></span>
+        </header>
+        <div class="chip-row">
+          <button class="chip" type="button"><i data-lucide="clock-3"></i>Pick up now<i data-lucide="chevron-down"></i></button>
+          <button class="chip" type="button"><i data-lucide="user-round"></i>For me<i data-lucide="chevron-down"></i></button>
+        </div>
+        <div class="route-fields">
+          <div class="route-glyphs" aria-hidden="true">
+            <span class="glyph-dot"></span>
+            <span class="glyph-line"></span>
+            <span class="glyph-square"></span>
+          </div>
+          <div class="route-inputs">
+            <input
+              id="search-input"
+              type="search"
+              placeholder="Pickup location"
+              autocomplete="off"
+              autocapitalize="off"
+              spellcheck="false"
+              aria-label="Pickup location"
+            />
+            <div class="route-static" id="destination-field">Brisbane Airport</div>
+          </div>
+          <button class="icon-button" id="search-clear" type="button" aria-label="Clear pickup location">
+            <i data-lucide="circle-x"></i>
           </button>
         </div>
+        <ul class="result-list" id="search-results" aria-label="Pickup suggestions"></ul>
+      </section>
 
-        <div class="live-indicator" aria-label="Prototype connection status">
-          <span class="live-dot"></span>
-          <span>Live</span>
-        </div>
-      </header>
+      <section class="sheet" id="sheet" aria-live="polite">
+        <div class="sheet-handle" id="sheet-handle" role="button" aria-label="Resize panel" tabindex="0"><span></span></div>
+        <div class="sheet-body" id="sheet-body"></div>
+      </section>
 
-      <main class="workspace">
-        <section class="map-region" aria-label="Pickup map">
-          <div id="map"></div>
+      <div class="map-hint" id="add-pin-hint" hidden>
+        <i data-lucide="map-pin-plus"></i>
+        <span>Tap the map where the pickup spot is</span>
+      </div>
 
-          <div class="map-top-controls">
-            <div class="search-shell">
-              <i data-lucide="search"></i>
-              <input
-                id="place-search"
-                type="search"
-                value="Queen Street Mall, Brisbane"
-                aria-label="Search for a pickup area"
-              />
-              <button class="icon-button" type="button" id="clear-search" aria-label="Clear search">
-                <i data-lucide="x"></i>
-              </button>
-            </div>
-          </div>
-
-          <div class="map-actions">
-            <button class="map-control" id="recenter-button" type="button" aria-label="Recenter map" title="Recenter map">
-              <i data-lucide="locate-fixed"></i>
-            </button>
-          </div>
-
-          <div class="map-legend" aria-label="Pickup point status legend">
-            <span><i class="legend-dot status-suitable"></i>Suitable</span>
-            <span><i class="legend-dot status-caution"></i>May be difficult</span>
-            <span><i class="legend-dot status-blocked"></i>Restricted</span>
-          </div>
-
-          <div class="map-hint">
-            <i data-lucide="mouse-pointer-click"></i>
-            Select a pickup marker to inspect current conditions
-          </div>
-        </section>
-
-        <aside class="control-panel" aria-live="polite">
-          <div id="passenger-panel" class="role-panel active">
-            <div class="panel-header">
-              <div>
-                <p class="eyebrow">Your pickup</p>
-                <h1 id="passenger-location-title">Queen Street Mall</h1>
-              </div>
-              <button class="icon-button" id="passenger-more" type="button" aria-label="More pickup options">
-                <i data-lucide="ellipsis"></i>
-              </button>
-            </div>
-
-            <div id="passenger-status" class="status-banner blocked">
-              <div class="status-icon"><i data-lucide="circle-alert"></i></div>
-              <div>
-                <p class="status-label">Pickup not recommended</p>
-                <p id="passenger-status-reason">No-stopping zone on the selected kerb</p>
-                <div class="source-line">
-                  <i data-lucide="badge-check"></i>
-                  <span id="passenger-status-source">Verified by 4 drivers · 12 min ago</span>
-                </div>
-              </div>
-            </div>
-
-            <div class="action-row">
-              <button class="primary-button" id="show-alternatives" type="button">
-                <i data-lucide="waypoints"></i>
-                Choose another point
-              </button>
-              <button class="secondary-button" data-open-report="passenger" type="button">
-                <i data-lucide="message-square-warning"></i>
-                Report
-              </button>
-            </div>
-
-            <button class="text-button" id="keep-original" type="button">
-              Keep the original pickup point
-              <i data-lucide="chevron-right"></i>
-            </button>
-
-            <section class="override-warning" id="override-warning" hidden>
-              <div>
-                <i data-lucide="shield-alert"></i>
-                <span>
-                  <strong>The driver may not be able to stop here</strong>
-                  <small>Road rules and live conditions can still require a relocation.</small>
-                </span>
-              </div>
-              <div class="override-actions">
-                <button class="secondary-button" id="cancel-override" type="button">Go back</button>
-                <button class="primary-button" id="confirm-override" type="button">Keep original</button>
-              </div>
-            </section>
-
-            <section class="panel-section" id="alternative-section">
-              <div class="section-heading">
-                <div>
-                  <p class="eyebrow">Recommended nearby</p>
-                  <h2>Alternative pickup points</h2>
-                </div>
-                <label class="compact-toggle">
-                  <input id="step-free-filter" type="checkbox" />
-                  <span>Step-free</span>
-                </label>
-              </div>
-
-              <div class="alternative-list" id="alternative-list"></div>
-            </section>
-
-            <section class="confirmation-card" id="passenger-confirmation" hidden>
-              <div class="confirmation-icon"><i data-lucide="circle-check-big"></i></div>
-              <div>
-                <p class="eyebrow">Pickup confirmed</p>
-                <h2 id="confirmed-location-name">Ann Street loading zone</h2>
-                <p id="confirmed-location-meta">3 min walk · step-free route</p>
-              </div>
-              <div class="driver-acknowledgement">
-                <span class="avatar">JM</span>
-                <div>
-                  <strong>Jordan has the same plan</strong>
-                  <span>Driver arriving in <b id="passenger-driver-eta">4 min</b></span>
-                </div>
-              </div>
-            </section>
-          </div>
-
-          <div id="driver-panel" class="role-panel">
-            <div class="panel-header">
-              <div>
-                <p class="eyebrow">Current request</p>
-                <h1>Pickup for Mia</h1>
-              </div>
-              <span class="trip-code">P-204</span>
-            </div>
-
-            <div class="driver-summary">
-              <div class="rider-row">
-                <span class="avatar passenger-avatar">MS</span>
-                <div>
-                  <strong>Mia S.</strong>
-                  <span>4.91 · 2 people</span>
-                </div>
-                <button class="icon-button" type="button" aria-label="Call passenger" title="Call passenger">
-                  <i data-lucide="phone"></i>
-                </button>
-                <button class="icon-button" type="button" aria-label="Message passenger" title="Message passenger">
-                  <i data-lucide="message-circle"></i>
-                </button>
-              </div>
-
-              <div class="route-progress" aria-label="Pickup route progress">
-                <span class="route-node driver-node"><i data-lucide="car-front"></i></span>
-                <span class="route-line"><i></i></span>
-                <span class="route-node pickup-node"><i data-lucide="map-pin"></i></span>
-              </div>
-
-              <div class="route-copy">
-                <div>
-                  <span>Your location</span>
-                  <strong>Charlotte St</strong>
-                </div>
-                <div class="route-copy-end">
-                  <span>Shared pickup</span>
-                  <strong id="driver-pickup-name">Queen Street Mall</strong>
-                </div>
-              </div>
-            </div>
-
-            <div id="driver-status" class="status-banner blocked">
-              <div class="status-icon"><i data-lucide="circle-alert"></i></div>
-              <div>
-                <p class="status-label" id="driver-status-label">Pickup not recommended</p>
-                <p id="driver-status-reason">No-stopping zone on the selected kerb</p>
-                <div class="source-line">
-                  <i data-lucide="refresh-cw"></i>
-                  <span id="driver-status-source">Synced with passenger · just now</span>
-                </div>
-              </div>
-            </div>
-
-            <div class="driver-eta">
-              <div>
-                <p class="eyebrow">Estimated arrival</p>
-                <strong id="driver-eta-value">4 min</strong>
-              </div>
-              <div class="distance-value">
-                <span>1.2 km</span>
-                <small>via Elizabeth St</small>
-              </div>
-            </div>
-
-            <div class="action-row driver-actions">
-              <button class="primary-button" id="driver-accept" type="button">
-                <i data-lucide="check"></i>
-                Confirm pickup plan
-              </button>
-              <button class="secondary-button" data-open-report="driver" type="button">
-                <i data-lucide="triangle-alert"></i>
-                Report condition
-              </button>
-            </div>
-
-            <section class="panel-section activity-section">
-              <div class="section-heading">
-                <div>
-                  <p class="eyebrow">Shared updates</p>
-                  <h2>Pickup activity</h2>
-                </div>
-              </div>
-              <ol class="activity-list" id="activity-list"></ol>
-            </section>
-          </div>
-        </aside>
-      </main>
-    </div>
-
-    <dialog id="report-dialog" class="report-dialog">
-      <form method="dialog" id="report-form">
-        <div class="dialog-header">
+      <section class="facilitator" id="facilitator" hidden aria-label="Facilitator controls">
+        <header class="facilitator-header">
           <div>
-            <p class="eyebrow">Live location feedback</p>
-            <h2>What is happening here?</h2>
+            <p class="eyebrow">Hidden from participants</p>
+            <h2>Facilitator</h2>
           </div>
-          <button class="icon-button" value="cancel" aria-label="Close report form">
+          <button class="icon-button" id="facilitator-close" type="button" aria-label="Close facilitator panel">
             <i data-lucide="x"></i>
           </button>
+        </header>
+
+        <div class="fac-section">
+          <h3>Session</h3>
+          <label class="fac-field">
+            <span>Participant ID</span>
+            <input id="fac-pid" type="text" placeholder="P07 or D03" autocomplete="off" />
+          </label>
+          <label class="fac-field">
+            <span>Scenario</span>
+            <select id="fac-scenario"></select>
+          </label>
+          <p class="fac-task" id="fac-task"></p>
+          <div class="fac-grid">
+            <label class="fac-field">
+              <span>Variant</span>
+              <select id="fac-variant">
+                <option value="explained">explained</option>
+                <option value="unexplained">unexplained</option>
+              </select>
+            </label>
+            <label class="fac-field">
+              <span>Order position</span>
+              <select id="fac-order">
+                <option value="1">1</option>
+                <option value="2">2</option>
+              </select>
+            </label>
+          </div>
+          <div class="fac-actions">
+            <button class="button primary" id="fac-load" type="button">Load scenario</button>
+            <button class="button secondary" id="fac-reset" type="button">Reset spots</button>
+          </div>
+          <p class="fac-meta" id="fac-session-summary"></p>
+          <button class="button secondary fac-wide" id="fac-switch" type="button">Show driver view (keep spots)</button>
+          <p class="fac-meta">Switching the view keeps the spot states so both views can be compared. Loading a scenario resets them.</p>
         </div>
 
-        <p class="dialog-context" id="report-location">Queen Street Mall, Brisbane</p>
-
-        <div class="report-options" role="radiogroup" aria-label="Pickup problem category">
-          <label>
-            <input type="radio" name="report-reason" value="No-stopping zone" checked />
-            <span><i data-lucide="circle-slash-2"></i>No-stopping zone</span>
-          </label>
-          <label>
-            <input type="radio" name="report-reason" value="Road closure" />
-            <span><i data-lucide="construction"></i>Road closure</span>
-          </label>
-          <label>
-            <input type="radio" name="report-reason" value="Heavy traffic" />
-            <span><i data-lucide="traffic-cone"></i>Heavy traffic</span>
-          </label>
-          <label>
-            <input type="radio" name="report-reason" value="Limited access" />
-            <span><i data-lucide="accessibility"></i>Limited access</span>
-          </label>
-          <label>
-            <input type="radio" name="report-reason" value="Unsafe roadside" />
-            <span><i data-lucide="shield-alert"></i>Unsafe roadside</span>
-          </label>
-          <label>
-            <input type="radio" name="report-reason" value="Construction or event" />
-            <span><i data-lucide="calendar-clock"></i>Construction or event</span>
-          </label>
+        <div class="fac-section">
+          <h3>Spot states</h3>
+          <div class="fac-spots" id="fac-spots"></div>
         </div>
 
-        <label class="field-label" for="report-note">Short note <span>Optional</span></label>
-        <textarea id="report-note" rows="3" maxlength="140" placeholder="Add a useful detail for the next passenger or driver"></textarea>
-
-        <div class="dialog-footer">
-          <p><i data-lucide="clock-3"></i> New reports begin as temporary until verified.</p>
-          <button class="primary-button" id="submit-report" value="default" type="submit">
-            Submit report
-          </button>
+        <div class="fac-section">
+          <h3>Break condition</h3>
+          <div class="fac-inline">
+            <select id="fac-break"></select>
+            <button class="button secondary" id="fac-break-apply" type="button">Apply</button>
+          </div>
+          <p class="fac-meta">Marks the log. "reload" reloads the page. "bad_location_data" removes the pin's coordinates.</p>
         </div>
-      </form>
-    </dialog>
 
-    <div class="toast-region" aria-live="assertive" aria-atomic="true" id="toast-region"></div>
+        <div class="fac-section">
+          <h3>Event log</h3>
+          <p class="fac-meta" id="fac-log-count"></p>
+          <div class="fac-actions">
+            <button class="button secondary" id="fac-export-json" type="button">Export JSON</button>
+            <button class="button secondary" id="fac-export-csv" type="button">Export CSV</button>
+            <button class="button secondary" id="fac-share" type="button">Share</button>
+            <button class="button danger" id="fac-clear" type="button">Clear log</button>
+          </div>
+          <ol class="fac-log" id="fac-log-tail"></ol>
+          <p class="fac-meta">Export at the end of every session, save to the team OneDrive, then clear.</p>
+        </div>
+
+        <p class="fac-hint">Open with Ctrl+Shift+F, the URL parameter ?facilitator=1, or five quick taps on the app name.</p>
+      </section>
+
+      <div class="dialog-backdrop" id="dialog-backdrop" hidden></div>
+      <dialog id="report-dialog" class="report-dialog">
+        <form id="report-form" method="dialog">
+          <div class="sheet-handle static"><span></span></div>
+          <header class="dialog-header">
+            <div>
+              <p class="eyebrow" id="report-eyebrow">Report a condition</p>
+              <h2 id="report-title">What is happening here?</h2>
+            </div>
+            <button class="icon-button" id="report-close" type="button" aria-label="Close report form">
+              <i data-lucide="x"></i>
+            </button>
+          </header>
+          <p class="dialog-context" id="report-location"></p>
+          <label class="field" id="report-name-field" hidden>
+            <span>Name this spot</span>
+            <input id="report-name" type="text" maxlength="40" placeholder="For example, Charlotte St taxi rank" autocomplete="off" />
+          </label>
+          <div class="report-options" id="report-options" role="radiogroup" aria-label="Reason"></div>
+          <label class="field">
+            <span>Short note <small>Optional</small></span>
+            <textarea id="report-note" rows="2" maxlength="140" placeholder="A useful detail for the next passenger or driver"></textarea>
+          </label>
+          <footer class="dialog-footer">
+            <p><i data-lucide="clock-3"></i>New reports start as temporary until other drivers verify them.</p>
+            <button class="button primary" id="report-submit" type="submit">Submit report</button>
+          </footer>
+        </form>
+      </dialog>
+
+      <div class="toast-region" id="toast-region" aria-live="assertive" aria-atomic="true"></div>
+    </div>
 
     <script
       src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
@@ -318,6 +192,8 @@
       crossorigin=""
     ></script>
     <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
-    <script src="app.js"></script>
+    <script src="data.js?v=5"></script>
+    <script src="log.js?v=5"></script>
+    <script src="app.js?v=5"></script>
   </body>
 </html>
