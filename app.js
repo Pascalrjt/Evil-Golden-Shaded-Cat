@@ -1007,6 +1007,61 @@ function renderSearch() {
   refreshIcons();
 }
 
+/* ---------- Back navigation ---------- */
+
+/* The top-left back button steps out of the current layer: an open override prompt or
+   suggestion list closes first, then the screen returns to the one before it. */
+function canGoBack() {
+  const ui = state.ui;
+  if (state.session.role === "driver") return ui.driverAddMode || ui.driverSuggestOpen;
+  if (ui.screen === "pickup") return true;
+  if (ui.screen === "confirmed") return !ui.completed;
+  return false;
+}
+
+function goBack() {
+  const ui = state.ui;
+  if (!canGoBack()) return;
+  if (state.session.role === "driver") {
+    if (ui.driverAddMode) {
+      ui.driverAddMode = false;
+      ui.driverPending = null;
+    } else {
+      ui.driverSuggestOpen = false;
+    }
+    render();
+    setSheet("half");
+    return;
+  }
+  if (ui.screen === "confirmed") {
+    ui.screen = "pickup";
+    log("confirmation_reverted", { spot_id: ui.chosenAlternativeId || ui.selectedSpotId });
+    render();
+    const origin = selectedSpot();
+    const chosen = getSpot(ui.chosenAlternativeId);
+    if (origin && chosen && chosen.id !== origin.id) focusPair(origin, chosen);
+    else if (origin) focusSpot(origin, 17);
+    setSheet("half");
+    return;
+  }
+  if (ui.overridePending) {
+    ui.overridePending = false;
+    log("override_cancelled", { spot_id: ui.selectedSpotId });
+    render();
+    return;
+  }
+  removeCustomPins();
+  ui.screen = "locate";
+  ui.locateExpanded = false;
+  ui.selectedSpotId = null;
+  ui.chosenAlternativeId = null;
+  ui.overridePending = false;
+  ui.suggestionsOpen = false;
+  log("pin_removed", {});
+  render();
+  setSheet("peek");
+}
+
 /* ---------- Actions ---------- */
 
 function placePin(spotId, label, entry) {
@@ -1457,7 +1512,7 @@ function render() {
 
   sheet.hidden = false;
   hint.hidden = !(role === "driver" && ui.driverAddMode);
-  back.hidden = !((role === "passenger" && ui.screen === "pickup" && state.scenario.entry === "search") || (role === "driver" && ui.driverAddMode));
+  back.hidden = !canGoBack();
   const body = $("#sheet-body");
   if (role === "passenger" && ui.screen === "locate") {
     body.innerHTML = locateTemplate();
@@ -1716,23 +1771,7 @@ function boot() {
   initSheetDrag();
   initFacilitator();
 
-  $("#back-button").addEventListener("click", () => {
-    if (state.session.role === "driver") {
-      state.ui.driverAddMode = false;
-      state.ui.driverPending = null;
-      render();
-      return;
-    }
-    removeCustomPins();
-    state.ui.screen = "locate";
-    state.ui.locateExpanded = false;
-    state.ui.selectedSpotId = null;
-    state.ui.chosenAlternativeId = null;
-    state.ui.overridePending = false;
-    log("pin_removed", {});
-    render();
-    setSheet("peek");
-  });
+  $("#back-button").addEventListener("click", goBack);
   $("#report-form").addEventListener("submit", handleReportSubmit);
   $("#report-close").addEventListener("click", () => closeReport(true));
   $("#dialog-backdrop").addEventListener("click", () => closeReport(true));

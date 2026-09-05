@@ -24,6 +24,10 @@ Open `http://localhost:4173`. The app renders in a phone-sized frame on a laptop
 
 Scenarios with a preset pin (Row 4, Row 2) skip straight to step 3.
 
+A round back button sits at the top left whenever there is somewhere to return to. On step 3 it closes an
+open "Keep my pin" prompt first, then returns to step 1 and logs `pin_removed`. On step 4 it returns to step 3
+and logs `confirmation_reverted`. On the driver side it leaves the add-a-spot mode or closes the suggestion list.
+
 On the first screen the app asks for the device location and, if it is inside the study area, starts the map
 there with a blue dot. Outside the area it falls back to Hungry Jack's on Queen Street. The round locate button re-centres on demand.
 Coordinates are never written to the event log; only whether location was granted and whether it was inside
