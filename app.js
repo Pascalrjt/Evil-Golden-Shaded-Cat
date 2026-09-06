@@ -111,10 +111,27 @@ function selectedSpot() {
   return getSpot(state.ui.selectedSpotId);
 }
 
-function walkFor(spot, origin = selectedSpot()) {
+/* Walk times and the walking line start from the passenger's position when the app has one
+   (device GPS, or the simulated Queen Street position outside the study area). Without a
+   position, and always on the driver side, they start from the selected pin. */
+function walkOrigin() {
+  const position = state.ui.userPosition;
+  if (state.session.role === "passenger" && position && validCoords([position[0], position[1]])) {
+    return { id: "you", name: "where you are", coordinates: [position[0], position[1]], device: true };
+  }
+  return selectedSpot();
+}
+
+function walkOriginKind() {
+  const origin = walkOrigin();
+  return origin && origin.device ? "position" : "pin";
+}
+
+function walkFor(spot, origin = walkOrigin()) {
   const overrides = state.scenario.walkOverrides || {};
   if (overrides[spot.id]) return overrides[spot.id];
   if (!origin || !validCoords(origin.coordinates) || !validCoords(spot.coordinates)) return null;
+  if (origin.id === spot.id) return 0;
   return Math.max(1, Math.ceil(distanceMetres(origin.coordinates, spot.coordinates) / WALK_METRES_PER_MINUTE));
 }
 
@@ -122,7 +139,7 @@ function alternativesFor(spot) {
   return state.spots
     .filter((candidate) => candidate.id !== spot.id && !candidate.custom && ["suitable", "caution"].includes(candidate.status) && validCoords(candidate.coordinates))
     .filter((candidate) => !state.ui.stepFreeOnly || candidate.stepFree)
-    .map((candidate) => ({ spot: candidate, walk: walkFor(candidate, spot) }))
+    .map((candidate) => ({ spot: candidate, walk: walkFor(candidate, state.session.role === "passenger" ? walkOrigin() : spot) }))
     .sort((a, b) => {
       const rank = (item) => (item.spot.status === "suitable" ? 0 : 1);
       return rank(a) - rank(b) || (a.walk ?? 99) - (b.walk ?? 99);
@@ -270,12 +287,20 @@ function transition(spotId, trigger, triggeredBy, extra = {}) {
 
 /* ---------- Map ---------- */
 
+/* The pan limit extends south of the study area because the map centre sits under the bottom
+   sheet (see focusSpot); without that room Leaflet clamps the view and hides the focused spot. */
+function mapMaxBounds() {
+  const bounds = L.latLngBounds(CBD_BOUNDS).pad(0.4);
+  const height = bounds.getNorth() - bounds.getSouth();
+  return bounds.extend([bounds.getSouth() - height * 0.5, bounds.getWest()]);
+}
+
 const map = L.map("map", {
   zoomControl: false,
   attributionControl: true,
   minZoom: 14,
   maxZoom: 19,
-  maxBounds: L.latLngBounds(CBD_BOUNDS).pad(0.4),
+  maxBounds: mapMaxBounds(),
   maxBoundsViscosity: 0.7,
 }).setView(CBD_CENTER, 16);
 
@@ -347,8 +372,13 @@ function renderMap() {
     L.marker(DRIVER_POSITION, { icon: carIcon(), keyboard: false, interactive: false }).addTo(markerLayer);
   }
 
-  if (selected && chosen && validCoords(selected.coordinates) && validCoords(chosen.coordinates)) {
-    L.polyline([selected.coordinates, chosen.coordinates], {
+  /* Passengers see one walking line, from where they are to the active pickup. Drivers have no
+     passenger position, so they see the relocation between the pin and the suggested spot. */
+  const walkStart = role === "passenger" ? walkOrigin() : selected;
+  const walkEnd = chosen || (role === "passenger" ? selected : null);
+  const showWalk = role === "driver" || ["pickup", "confirmed"].includes(ui.screen);
+  if (showWalk && walkStart && walkEnd && walkStart.id !== walkEnd.id && validCoords(walkStart.coordinates) && validCoords(walkEnd.coordinates)) {
+    L.polyline([walkStart.coordinates, walkEnd.coordinates], {
       color: "#ffffff",
       weight: 4,
       opacity: 0.9,
@@ -363,14 +393,70 @@ function renderMap() {
   }
 }
 
+/* The map fills the phone and the sheet floats over it, so a focused spot must land in the strip
+   between the top bar and the sheet rather than at the centre of the map. The strip is computed
+   from the sheet level that is about to apply, so callers set the sheet before focusing. */
+
+const FOCUS_MARGIN = 24;
+const MIN_VISIBLE_MAP = 80;
+const PAIR_PADDING = 28;
+let mapFocus = null;
+
+function visibleMapStrip() {
+  const phone = $("#phone");
+  const phoneTop = phone.getBoundingClientRect().top;
+  const topBar = $("#top-bar").getBoundingClientRect().bottom - phoneTop;
+  const sheetHeight = Math.round(phone.clientHeight * SHEET_LEVELS[sheetLevel]);
+  return { top: Math.max(0, topBar) + FOCUS_MARGIN, bottom: phone.clientHeight - sheetHeight - FOCUS_MARGIN };
+}
+
 function focusSpot(spot, zoom = 16) {
   if (!spot || !validCoords(spot.coordinates)) return;
-  map.setView(spot.coordinates, zoom, { animate: true });
+  mapFocus = { type: "spot", spot, zoom };
+  const strip = visibleMapStrip();
+  if (strip.bottom - strip.top < MIN_VISIBLE_MAP) return;
+  const size = map.getSize();
+  const target = L.point(size.x / 2, (strip.top + strip.bottom) / 2);
+  const centre = map.project(spot.coordinates, zoom).add(L.point(size.x / 2, size.y / 2).subtract(target));
+  map.setView(map.unproject(centre, zoom), zoom, { animate: true });
+}
+
+function focusPoints(list) {
+  const points = list.filter((point) => point && validCoords(point.coordinates));
+  const unique = points.filter(
+    (point, index) => points.findIndex((other) => other.coordinates[0] === point.coordinates[0] && other.coordinates[1] === point.coordinates[1]) === index,
+  );
+  if (unique.length === 0) return;
+  if (unique.length === 1) return focusSpot(unique[0], 17);
+  mapFocus = { type: "points", points: unique };
+  const strip = visibleMapStrip();
+  if (strip.bottom - strip.top < MIN_VISIBLE_MAP) return;
+  const size = map.getSize();
+  map.fitBounds(L.latLngBounds(unique.map((point) => point.coordinates)), {
+    paddingTopLeft: [60, strip.top + PAIR_PADDING],
+    paddingBottomRight: [60, size.y - strip.bottom + PAIR_PADDING],
+    maxZoom: 17,
+  });
 }
 
 function focusPair(a, b) {
-  if (!a || !b || !validCoords(a.coordinates) || !validCoords(b.coordinates)) return focusSpot(a || b);
-  map.fitBounds(L.latLngBounds([a.coordinates, b.coordinates]), { padding: [70, 70], maxZoom: 17 });
+  focusPoints([a, b]);
+}
+
+/* Passenger view: where they are, the pin they set, the suggested spot once chosen, and the
+   driver once the pickup is confirmed. */
+function focusPickup() {
+  const ui = state.ui;
+  const points = [walkOrigin(), selectedSpot(), getSpot(ui.chosenAlternativeId)];
+  if (ui.screen === "confirmed") points.unshift({ coordinates: DRIVER_POSITION });
+  focusPoints(points);
+}
+
+function refocusMap() {
+  if (!mapFocus) return;
+  if (state.session.role === "passenger" && state.ui.screen === "locate") return;
+  if (mapFocus.type === "points") focusPoints(mapFocus.points);
+  else focusSpot(mapFocus.spot, mapFocus.zoom);
 }
 
 function onPinTap(spotId) {
@@ -553,7 +639,7 @@ map.on("moveend", () => {
   }, 400);
 });
 
-/* ---------- Device location (used only to start the map, never logged) ---------- */
+/* ---------- Device location (starts the map and anchors walk times; coordinates are never logged) ---------- */
 
 const userLayer = L.layerGroup().addTo(map);
 const USER_DOT_RADIUS = 9;
@@ -602,7 +688,12 @@ function requestUserPosition(options = {}) {
       if (!inside) {
         showToast("Outside the study area", "Showing Hungry Jack's on Queen Street instead of your location.");
       }
-      if (recenter) centreMapOnUserPosition(state.ui.userPosition, { animate: manual });
+      if (state.ui.screen === "locate") {
+        if (recenter) centreMapOnUserPosition(state.ui.userPosition, { animate: manual });
+      } else {
+        render();
+        focusPickup();
+      }
       persist();
     },
     (error) => {
@@ -628,6 +719,11 @@ function setSheet(level) {
   $("#sheet").style.height = `${sheetHeight}px`;
   $("#phone").style.setProperty("--sheet-height", `${sheetHeight}px`);
   window.setTimeout(() => map.invalidateSize(), SHEET_TRANSITION_MS);
+}
+
+function snapSheet(level) {
+  setSheet(level);
+  refocusMap();
 }
 
 function expandLocateSheet(via) {
@@ -672,12 +768,12 @@ function initSheetDrag() {
     if (!dragging.moved) {
       if (isLocateSheet && state.ui.locateExpanded) collapseLocateSheet();
       else if (isLocateSheet) expandLocateSheet("sheet_handle");
-      else setSheet(sheetLevel === "full" ? "half" : "full");
+      else snapSheet(sheetLevel === "full" ? "half" : "full");
     } else {
       const nearest = Object.entries(SHEET_LEVELS).sort((a, b) => Math.abs(a[1] - ratio) - Math.abs(b[1] - ratio))[0][0];
       if (isLocateSheet && nearest === "peek") collapseLocateSheet();
       else if (isLocateSheet) expandLocateSheet("sheet_drag");
-      else setSheet(nearest);
+      else snapSheet(nearest);
     }
     dragging = null;
   };
@@ -687,11 +783,11 @@ function initSheetDrag() {
     const isLocateSheet = state.session.role === "passenger" && state.ui.screen === "locate";
     if (event.key === "ArrowUp") {
       if (isLocateSheet) expandLocateSheet("keyboard");
-      else setSheet("full");
+      else snapSheet("full");
     }
     if (event.key === "ArrowDown") {
       if (isLocateSheet) collapseLocateSheet();
-      else setSheet("peek");
+      else snapSheet("peek");
     }
   });
 }
@@ -806,12 +902,17 @@ function passengerPickupTemplate(spot) {
       </div>`
     : "";
 
+  const origin = walkOrigin();
+  const walkToPin = origin && origin.device ? walkFor(spot) : null;
+  const walkLine = walkToPin ? `<p class="muted small"><i data-lucide="footprints"></i>${walkToPin} min walk from where you are</p>` : "";
+
   return `
     ${pressure}
     <header class="sheet-header">
       <p class="eyebrow">Confirm your pickup spot</p>
       <h1>${escapeHtml(spot.name)}</h1>
       <p class="muted">${escapeHtml(spot.address)}</p>
+      ${walkLine}
     </header>
     ${statusCard(spot, { explain })}
     ${suggestions}
@@ -827,12 +928,19 @@ function passengerConfirmedTemplate(spot) {
   const ui = state.ui;
   const chosen = getSpot(ui.chosenAlternativeId) || spot;
   const moved = chosen.id !== spot.id;
-  const walk = moved ? walkFor(chosen, spot) : null;
-  const note = moved
-    ? `<p class="muted small"><i data-lucide="footprints"></i>${walk ? `${walk} min walk from ${escapeHtml(spot.name)}` : `Moved from ${escapeHtml(spot.name)}`}</p>`
-    : chosen.status !== "suitable"
+  const origin = walkOrigin();
+  const fromDevice = Boolean(origin && origin.device);
+  const walk = moved || fromDevice ? walkFor(chosen) : null;
+  const walkNote = walk
+    ? `<p class="muted small"><i data-lucide="footprints"></i>${walk} min walk from ${fromDevice ? "where you are" : escapeHtml(spot.name)}</p>`
+    : moved
+      ? `<p class="muted small"><i data-lucide="footprints"></i>Moved from ${escapeHtml(spot.name)}</p>`
+      : "";
+  const statusNote =
+    !moved && chosen.status !== "suitable"
       ? `<p class="warn small"><i data-lucide="info"></i>${DRIVER_NAME} has been told this spot is ${STATUS_LABEL[chosen.status].toLowerCase()}.</p>`
       : "";
+  const note = walkNote + statusNote;
   if (ui.completed) {
     return `
       <header class="sheet-header">
@@ -1037,11 +1145,8 @@ function goBack() {
     ui.screen = "pickup";
     log("confirmation_reverted", { spot_id: ui.chosenAlternativeId || ui.selectedSpotId });
     render();
-    const origin = selectedSpot();
-    const chosen = getSpot(ui.chosenAlternativeId);
-    if (origin && chosen && chosen.id !== origin.id) focusPair(origin, chosen);
-    else if (origin) focusSpot(origin, 17);
     setSheet("half");
+    focusPickup();
     return;
   }
   if (ui.overridePending) {
@@ -1058,6 +1163,7 @@ function goBack() {
   ui.overridePending = false;
   ui.suggestionsOpen = false;
   log("pin_removed", {});
+  mapFocus = null;
   render();
   setSheet("peek");
 }
@@ -1078,8 +1184,8 @@ function placePin(spotId, label, entry) {
   ui.completed = false;
   log("pin_placed", { spot_id: spot.id, search_label: ui.searchLabel, entry, coordinates: spot.coordinates });
   render();
-  focusSpot(spot, 17);
   setSheet("half");
+  focusPickup();
 }
 
 function chooseAlternative(spotId) {
@@ -1088,9 +1194,9 @@ function chooseAlternative(spotId) {
   if (!spot || !origin) return;
   state.ui.chosenAlternativeId = spot.id;
   state.ui.overridePending = false;
-  log("alternative_selected", { spot_id: spot.id, walk_minutes: walkFor(spot, origin), driver_eta_minutes: spot.driverEta });
+  log("alternative_selected", { spot_id: spot.id, walk_minutes: walkFor(spot), walk_origin: walkOriginKind(), driver_eta_minutes: spot.driverEta });
   render();
-  focusPair(origin, spot);
+  focusPickup();
 }
 
 function confirmPickup(outcome) {
@@ -1101,12 +1207,12 @@ function confirmPickup(outcome) {
   if (outcome !== "alternative") ui.chosenAlternativeId = null;
   ui.screen = "confirmed";
   ui.overridePending = false;
-  const walk = outcome === "alternative" ? walkFor(chosen, origin) : 0;
-  log("confirmed", { chosen_spot_id: chosen.id, outcome, walk_minutes: walk, status: chosen.status });
+  const walk = walkFor(chosen);
+  log("confirmed", { chosen_spot_id: chosen.id, outcome, walk_minutes: walk, walk_origin: walkOriginKind(), status: chosen.status });
   log("scenario_completed", { outcome: outcome === "alternative" ? "alternative" : "original" });
   render();
-  focusPair({ coordinates: DRIVER_POSITION }, chosen);
   setSheet("half");
+  focusPickup();
   showToast(
     outcome === "alternative" ? "Pickup updated" : "Pickup confirmed",
     outcome === "override" ? `${DRIVER_NAME} has been told about the pickup status.` : `${DRIVER_NAME} can see ${chosen.name}.`,
@@ -1293,12 +1399,14 @@ function loadScenario(scenarioId, participantId, variant, orderPosition, options
   });
   if (scenario.role === "passenger" && scenario.entry === "preset") {
     placePin(scenario.presetSpot, getSpot(scenario.presetSpot).name, "preset");
+    if (state.session.useGps) requestUserPosition({ recenter: false });
   } else {
     render();
     if (scenario.role === "driver") {
-      focusPair({ coordinates: DRIVER_POSITION }, selectedSpot());
       setSheet("half");
+      focusPair({ coordinates: DRIVER_POSITION }, selectedSpot());
     } else {
+      mapFocus = null;
       map.setView(CBD_CENTER, 16);
       setSheet("peek");
       if (state.session.useGps) requestUserPosition({ recenter: true });
@@ -1323,10 +1431,10 @@ function switchView(role) {
   }
   log("view_switched", { view: role, spot_id: ui.selectedSpotId });
   render();
+  setSheet("half");
   const selected = selectedSpot();
   if (role === "driver") focusPair({ coordinates: DRIVER_POSITION }, selected);
-  else if (selected) focusSpot(selected, 17);
-  setSheet("half");
+  else if (selected) focusPickup();
 }
 
 function resetSpotsForScenario() {
@@ -1718,6 +1826,7 @@ function logRenderEvents() {
         variant: scenario.variant,
         alternative_spot_id: best ? best.spot.id : null,
         alternative_walk_minutes: best ? best.walk : null,
+        walk_origin: walkOriginKind(),
         countdown_start: scenario.countdownSeconds,
       });
       log("explanation_visible", { value: scenario.variant !== "unexplained" });
@@ -1787,12 +1896,13 @@ function boot() {
   });
   window.addEventListener("resize", () => {
     map.invalidateSize();
-    setSheet(sheetLevel);
+    snapSheet(sheetLevel);
   });
 
   const restored = restore();
   applyGpsParam();
   const loadedFromUrl = applyUrlParams();
+  setSheet(state.session.role === "passenger" && state.ui.screen === "locate" ? (state.ui.locateExpanded ? "full" : "peek") : "half");
   if (!loadedFromUrl) {
     if (!restored) {
       resetSpotsForScenario();
@@ -1801,7 +1911,7 @@ function boot() {
     render();
     const selected = selectedSpot();
     if (state.session.role === "driver") focusPair({ coordinates: DRIVER_POSITION }, selected);
-    else if (selected) focusSpot(selected, 17);
+    else if (selected) focusPickup();
     else if (state.ui.mapCenter) map.setView([state.ui.mapCenter[0], state.ui.mapCenter[1]], state.ui.mapCenter[2] || 16, { animate: false });
     else map.setView(CBD_CENTER, 16);
     if (state.session.role === "passenger" && state.ui.screen === "locate" && state.session.useGps && !state.ui.mapCenter) {
@@ -1810,7 +1920,6 @@ function boot() {
   }
   $("#locate-me").addEventListener("click", () => requestUserPosition({ recenter: true, manual: true }));
   if (["1", "true", "yes"].includes(String(new URLSearchParams(window.location.search).get("facilitator") || "").toLowerCase())) openFacilitator(true);
-  setSheet(state.session.role === "passenger" && state.ui.screen === "locate" ? (state.ui.locateExpanded ? "full" : "peek") : "half");
   window.setTimeout(() => map.invalidateSize(true), 200);
 }
 
