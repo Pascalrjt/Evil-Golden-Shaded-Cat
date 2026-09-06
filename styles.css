@@ -202,6 +202,13 @@ h2 {
   background: #ffffff;
 }
 
+/* Bare candidate dots keep a finger-sized tap area even without a label. */
+.pin.is-bare::after {
+  content: "";
+  position: absolute;
+  inset: -14px;
+}
+
 .pin-pickup {
   flex: 0 0 auto;
   width: 20px;

@@ -315,12 +315,13 @@ const routeLayer = L.layerGroup().addTo(map);
 function pinIcon(spot, options = {}) {
   const eta = options.eta ? `<span class="pin-eta"><b>${options.eta}</b><small>MIN</small></span>` : "";
   const glyph = options.pickup ? '<span class="pin-pickup"></span>' : '<span class="pin-dot"></span>';
-  const classes = ["pin", spot.status, options.pickup ? "is-pickup" : "", options.chosen ? "is-chosen" : "", options.pending ? "is-pending" : ""]
+  const classes = ["pin", spot.status, options.pickup ? "is-pickup" : "", options.chosen ? "is-chosen" : "", options.pending ? "is-pending" : "", options.bare ? "is-bare" : ""]
     .filter(Boolean)
     .join(" ");
+  const label = options.bare ? "" : `<span class="pin-label">${eta}<span class="pin-name">${escapeHtml(spot.name)}</span><i data-lucide="chevron-right"></i></span>`;
   return L.divIcon({
     className: "pin-shell",
-    html: `<div class="${classes}">${glyph}<span class="pin-label">${eta}<span class="pin-name">${escapeHtml(spot.name)}</span><i data-lucide="chevron-right"></i></span></div>`,
+    html: `<div class="${classes}">${glyph}${label}</div>`,
     iconSize: [0, 0],
     iconAnchor: [0, 0],
   });
@@ -344,7 +345,8 @@ function renderMap() {
   const chosen = getSpot(ui.chosenAlternativeId) || getSpot(ui.driverSuggested);
   const showStatusPins = role === "driver" || ui.screen !== "search";
   const hidePickup = role === "passenger" && ui.screen === "locate";
-  /* While browsing suggestions only the pin and its candidates are drawn, so the fitted map stays legible. */
+  /* While browsing suggestions only the pin and its candidates are drawn, and only the pin and the
+     highlighted candidate carry a label; the other candidates are bare dots whose names sit on the cards. */
   const browsing = role === "passenger" && ui.screen === "pickup" && ui.suggestionsOpen && selected;
   const candidateIds = browsing ? new Set(alternativesFor(selected).map((item) => item.spot.id)) : null;
 
@@ -356,8 +358,9 @@ function renderMap() {
     if (spot.custom && !isPickup) return;
     if (candidateIds && !isPickup && !candidateIds.has(spot.id)) return;
     const eta = isPickup || isChosen ? spot.driverEta : null;
+    const bare = Boolean(candidateIds) && !isPickup && !isChosen;
     const marker = L.marker(spot.coordinates, {
-      icon: pinIcon(spot, { pickup: isPickup, chosen: isChosen, eta }),
+      icon: pinIcon(spot, { pickup: isPickup, chosen: isChosen, eta, bare }),
       keyboard: false,
       zIndexOffset: isPickup ? 1000 : isChosen ? 900 : 0,
     });
@@ -1233,6 +1236,8 @@ function chooseAlternative(spotId) {
   state.ui.overridePending = false;
   log("alternative_selected", { spot_id: spot.id, walk_minutes: walkFor(spot), walk_origin: walkOriginKind(), driver_eta_minutes: spot.driverEta });
   render();
+  const card = $(".option-card.is-chosen");
+  if (card) card.scrollIntoView({ block: "nearest" });
   focusPickup();
 }
 
