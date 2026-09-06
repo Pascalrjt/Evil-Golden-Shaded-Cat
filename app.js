@@ -313,7 +313,7 @@ const markerLayer = L.layerGroup().addTo(map);
 const routeLayer = L.layerGroup().addTo(map);
 
 function pinIcon(spot, options = {}) {
-  const eta = options.eta ? `<span class="pin-eta"><b>${options.eta}</b><small>MIN</small></span>` : "";
+  const eta = options.eta != null ? `<span class="pin-eta"><b>${options.eta}</b><small>${options.etaLabel || "MIN"}</small></span>` : "";
   const glyph = options.pickup ? '<span class="pin-pickup"></span>' : '<span class="pin-dot"></span>';
   const classes = ["pin", spot.status, options.pickup ? "is-pickup" : "", options.chosen ? "is-chosen" : "", options.pending ? "is-pending" : "", options.bare ? "is-bare" : ""]
     .filter(Boolean)
@@ -343,10 +343,11 @@ function renderMap() {
   const role = state.session.role;
   const selected = selectedSpot();
   const chosen = getSpot(ui.chosenAlternativeId) || getSpot(ui.driverSuggested);
+  const activePickup = chosen || selected;
   const showStatusPins = role === "driver" || ui.screen !== "search";
   const hidePickup = role === "passenger" && ui.screen === "locate";
-  /* While browsing suggestions only the pin and its candidates are drawn, and only the pin and the
-     highlighted candidate carry a label; the other candidates are bare dots whose names sit on the cards. */
+  /* While browsing suggestions only the original pin and its candidates are drawn.
+     The passenger's active pickup carries the label; the original remains a reference dot. */
   const browsing = role === "passenger" && ui.screen === "pickup" && ui.suggestionsOpen && selected;
   const candidateIds = browsing ? new Set(alternativesFor(selected).map((item) => item.spot.id)) : null;
 
@@ -357,12 +358,17 @@ function renderMap() {
     if (!showStatusPins && !isPickup) return;
     if (spot.custom && !isPickup) return;
     if (candidateIds && !isPickup && !candidateIds.has(spot.id)) return;
-    const eta = isPickup || isChosen ? spot.driverEta : null;
-    const bare = Boolean(candidateIds) && !isPickup && !isChosen;
+    const isActivePickup = !hidePickup && activePickup && spot.id === activePickup.id;
+    const eta = role === "passenger"
+      ? (isActivePickup && (walkOrigin().device || isChosen) ? walkFor(spot) : null)
+      : (isPickup || isChosen ? spot.driverEta : null);
+    const etaLabel = role === "passenger" ? "MIN WALK" : "MIN";
+    const bare = (Boolean(candidateIds) && !isPickup && !isChosen)
+      || (role === "passenger" && isPickup && !isActivePickup);
     const marker = L.marker(spot.coordinates, {
-      icon: pinIcon(spot, { pickup: isPickup, chosen: isChosen, eta, bare }),
+      icon: pinIcon(spot, { pickup: isPickup, chosen: isChosen, eta, etaLabel, bare }),
       keyboard: false,
-      zIndexOffset: isPickup ? 1000 : isChosen ? 900 : 0,
+      zIndexOffset: isActivePickup ? 1000 : isPickup || isChosen ? 900 : 0,
     });
     marker.on("click", () => onPinTap(spot.id));
     marker.addTo(markerLayer);
