@@ -344,6 +344,9 @@ function renderMap() {
   const chosen = getSpot(ui.chosenAlternativeId) || getSpot(ui.driverSuggested);
   const showStatusPins = role === "driver" || ui.screen !== "search";
   const hidePickup = role === "passenger" && ui.screen === "locate";
+  /* While browsing suggestions only the pin and its candidates are drawn, so the fitted map stays legible. */
+  const browsing = role === "passenger" && ui.screen === "pickup" && ui.suggestionsOpen && selected;
+  const candidateIds = browsing ? new Set(alternativesFor(selected).map((item) => item.spot.id)) : null;
 
   state.spots.forEach((spot) => {
     if (!validCoords(spot.coordinates)) return;
@@ -351,10 +354,12 @@ function renderMap() {
     const isChosen = chosen && spot.id === chosen.id;
     if (!showStatusPins && !isPickup) return;
     if (spot.custom && !isPickup) return;
+    if (candidateIds && !isPickup && !candidateIds.has(spot.id)) return;
     const eta = isPickup || isChosen ? spot.driverEta : null;
     const marker = L.marker(spot.coordinates, {
       icon: pinIcon(spot, { pickup: isPickup, chosen: isChosen, eta }),
       keyboard: false,
+      zIndexOffset: isPickup ? 1000 : isChosen ? 900 : 0,
     });
     marker.on("click", () => onPinTap(spot.id));
     marker.addTo(markerLayer);
@@ -447,8 +452,10 @@ function focusPair(a, b) {
    driver once the pickup is confirmed. */
 function focusPickup() {
   const ui = state.ui;
-  const points = [walkOrigin(), selectedSpot(), getSpot(ui.chosenAlternativeId)];
+  const selected = selectedSpot();
+  const points = [walkOrigin(), selected, getSpot(ui.chosenAlternativeId)];
   if (ui.screen === "confirmed") points.unshift({ coordinates: DRIVER_POSITION });
+  if (ui.screen === "pickup" && ui.suggestionsOpen && selected) points.push(...alternativesFor(selected).map((item) => item.spot));
   focusPoints(points);
 }
 
@@ -905,6 +912,36 @@ function passengerPickupTemplate(spot) {
   const origin = walkOrigin();
   const walkToPin = origin && origin.device ? walkFor(spot) : null;
   const walkLine = walkToPin ? `<p class="muted small"><i data-lucide="footprints"></i>${walkToPin} min walk from where you are</p>` : "";
+
+  /* Browsing suggestions: the pin summary and the filter stay put, the cards scroll on their
+     own, and the actions stay pinned, so the sheet can stay at half height over the map. */
+  if (showSuggestions && ui.suggestionsOpen) {
+    const lateStrip = scenario.pressure
+      ? `<div class="late-strip"><i data-lucide="alarm-clock"></i><span>Running late. Driver arrives in <b id="countdown">${countdownText()}</b></span></div>`
+      : "";
+    return `
+      <div class="browse-head">
+        ${lateStrip}
+        <button class="browse-summary" type="button" id="toggle-suggestions" aria-expanded="true">
+          <span class="swatch ${spot.status}"></span>
+          <span class="browse-summary-text"><strong>${escapeHtml(spot.name)}</strong><small>${STATUS_LABEL[spot.status]}${walkToPin ? ` · ${walkToPin} min walk` : ""}</small></span>
+          <i data-lucide="chevron-down"></i>
+        </button>
+        <div class="browse-bar">
+          <span><strong>Suggested pickup spots</strong><small>${alternatives.length} nearby</small></span>
+          <label class="toggle-row compact"><span>Step-free only</span><input type="checkbox" id="step-free" ${ui.stepFreeOnly ? "checked" : ""} /></label>
+        </div>
+      </div>
+      <div class="browse-list">
+        <div class="option-list">${suggestionCards || '<p class="muted">No spots match this filter.</p>'}</div>
+        <button class="button ghost" type="button" id="open-report"><i data-lucide="flag"></i>Report a problem here</button>
+      </div>
+      <div class="browse-actions">
+        ${primary}
+        ${keepPin}
+        ${override}
+      </div>`;
+  }
 
   return `
     ${pressure}
@@ -1622,6 +1659,8 @@ function render() {
   hint.hidden = !(role === "driver" && ui.driverAddMode);
   back.hidden = !canGoBack();
   const body = $("#sheet-body");
+  const previousList = body.querySelector(".browse-list");
+  const listScroll = previousList ? previousList.scrollTop : 0;
   if (role === "passenger" && ui.screen === "locate") {
     body.innerHTML = locateTemplate();
   } else if (role === "driver") {
@@ -1631,6 +1670,9 @@ function render() {
   } else {
     body.innerHTML = passengerPickupTemplate(selectedSpot());
   }
+  const list = body.querySelector(".browse-list");
+  body.classList.toggle("browsing", Boolean(list));
+  if (list) list.scrollTop = listScroll;
   bindSheetHandlers();
 
   logRenderEvents();
@@ -1769,7 +1811,8 @@ function toggleSuggestions(forceOpen) {
   ui.suggestionsOpen = next;
   if (next) log("alternatives_opened", { via: "sheet" });
   render();
-  if (next) setSheet("full");
+  setSheet("half");
+  focusPickup();
 }
 
 function logRenderEvents() {
