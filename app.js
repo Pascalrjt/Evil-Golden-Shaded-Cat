@@ -1630,7 +1630,7 @@ function initFacilitator() {
     const now = Date.now();
     facilitatorTaps = facilitatorTaps.filter((time) => now - time < 2500);
     facilitatorTaps.push(now);
-    if (facilitatorTaps.length >= 5) {
+    if (facilitatorTaps.length >= 3) {
       facilitatorTaps = [];
       openFacilitator(true);
     }

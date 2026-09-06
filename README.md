@@ -39,7 +39,7 @@ The facilitator panel is hidden from participants. Open it with any of:
 
 - `Ctrl+Shift+F`
 - the URL parameter `?facilitator=1`
-- five quick taps on the small "Pickup Pilot" badge at the top right
+- three quick taps on the small "Pickup Pilot" badge at the top right
 
 Sessions can also be started from the URL, which is the quickest way on a phone:
 
