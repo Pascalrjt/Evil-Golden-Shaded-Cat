@@ -25,8 +25,10 @@ function defaultUi() {
     gpsAttempted: false,
     searchLabel: "",
     chosenAlternativeId: null,
+    originalChosen: false,
     overridePending: false,
     suggestionsOpen: false,
+    statusDetailOpen: false,
     statusLoggedFor: null,
     relocationLoggedFor: null,
     badLocationLogged: false,
@@ -868,7 +870,8 @@ function passengerPickupState(spot = selectedSpot()) {
  const canKeep=active && valid && !staged && !suitable;
  const overriding=canKeep && ui.overridePending;
  const chosen=canSuggest ? alternatives.find(item=>item.spot.id===ui.chosenAlternativeId)?.spot || null : null;
- return {active,valid,staged,suitable,alternatives,canSuggest,canKeep,overriding,chosen,
+ const originalChosen=canSuggest && !chosen && Boolean(ui.originalChosen);
+ return {active,valid,staged,suitable,alternatives,canSuggest,canKeep,overriding,chosen,originalChosen,
   browsing:canSuggest && ui.suggestionsOpen && !overriding,
   canInspect:active && valid && staged && a.p3Stage==="inspect",
   canReport:active && valid && !staged && !overriding,
@@ -879,7 +882,7 @@ function passengerPickupState(spot = selectedSpot()) {
 function syncPassengerPickupState() {
  if (state.session.role!=="passenger" || state.ui.screen!=="pickup") return;
  const view=passengerPickupState();
- if (!view.canSuggest) { state.ui.suggestionsOpen=false; state.ui.chosenAlternativeId=null; }
+ if (!view.canSuggest) { state.ui.suggestionsOpen=false; state.ui.chosenAlternativeId=null; state.ui.originalChosen=false; }
  else if (!view.chosen) state.ui.chosenAlternativeId=null;
  if (!view.canKeep) state.ui.overridePending=false;
 }
@@ -903,7 +906,19 @@ function passengerPickupTemplate(spot) {
  const prompt=!primary && view.canSuggest?'<p class="muted">Choose a suggested pickup or keep your pin.</p>':!view.suitable && !view.canSuggest?'<p class="muted">No suggested alternatives are available. You can choose another location on the map or keep this pin.</p>':"";
  const report=view.canReport?`<button class="button ghost" id="open-report" type="button">${view.canSuggest || scenario.p4?"Report a problem at the original pickup":"Report a problem here"}</button>`:"";
  const actions=`${primary}${prompt}${keep}`;
- if (view.browsing) return `<div class="browse-head">${head}<button class="section-toggle" id="toggle-suggestions" type="button" aria-expanded="true"><strong>Suggested pickup spots</strong><span>${view.alternatives.length} nearby</span></button></div><div class="browse-list"><div class="option-list">${cards}</div>${report}</div><div class="browse-actions">${actions}</div>`;
+ if (view.browsing) {
+  const detailOpen=Boolean(ui.statusDetailOpen);
+  const summary=`<button class="browse-summary" id="toggle-status-detail" type="button" aria-expanded="${detailOpen}"><span class="swatch ${spot.status}"></span><span class="browse-summary-text"><strong>${STATUS_LABEL[spot.status]}</strong><small>${escapeHtml(spot.address)}</small></span><i data-lucide="${detailOpen?"chevron-up":"chevron-down"}"></i></button>`;
+  const browseHead=`<header class="sheet-header compact"><p class="eyebrow">${originalLabel}</p><h1>${escapeHtml(spot.name)}</h1></header>${summary}${detailOpen?statusCard(spot):""}`;
+  const toggle=`<button class="section-toggle" id="toggle-suggestions" type="button" aria-expanded="true"><strong>Suggested pickup spots</strong><span>${view.alternatives.length} nearby</span></button>`;
+  const originWalk=walkFor(spot);
+  const originalCard=view.canKeep?`<button class="option-card original ${view.originalChosen?"is-chosen":""}" type="button" data-alt="${spot.id}" aria-pressed="${view.originalChosen}">
+  <span class="option-main"><span class="option-eyebrow">Your original pin</span><strong>${escapeHtml(spot.name)}</strong><span class="option-tags">${statusTag(spot)}</span>
+  <span class="alternative-support">${supportingVisible()?escapeHtml(spot.reason):""}${supportingVisible()&&!scenario.p4?`<span class="alternative-evidence">${escapeHtml(freshnessText(spot))}<br>Source: ${escapeHtml(sourceText(spot))}</span>`:""}</span></span><span class="option-meta"><strong>${originWalk===0?"At your pin":`${originWalk ?? "?"} min walk`}</strong></span></button>`:"";
+  const browsePrimary=primary?primary:view.originalChosen&&view.canKeep?`<button class="button primary" id="keep-pin" type="button">${spot.status==="unknown"?"Use this pickup anyway":"Keep my pin anyway"}</button>`:"";
+  const footer=browsePrimary||report?`<div class="browse-actions">${browsePrimary}${report}</div>`:"";
+  return `<div class="browse-head">${browseHead}${toggle}</div><div class="browse-list"><div class="option-list">${cards}${originalCard}</div></div>${footer}`;
+ }
  return `${head}${view.canOpenSuggestions?'<button class="button secondary" id="open-suggestions" type="button">See suggested pickup spots</button>':""}<div class="actions">${actions}${report}</div>`;
 }
 function passengerConfirmedTemplate(spot) {
@@ -1118,8 +1133,10 @@ function goBack() {
   ui.locateExpanded = false;
   ui.selectedSpotId = null;
   ui.chosenAlternativeId = null;
+  ui.originalChosen = false;
   ui.overridePending = false;
   ui.suggestionsOpen = false;
+  ui.statusDetailOpen = false;
   log("pin_removed", {});
   mapFocus = null;
   render();
@@ -1139,8 +1156,10 @@ function placePin(spotId, label, entry) {
   ui.screen = "pickup";
   ui.locateExpanded = false;
   ui.chosenAlternativeId = null;
+  ui.originalChosen = false;
   ui.overridePending = false;
   ui.suggestionsOpen = Boolean(state.scenario.suggestionsExpanded);
+  ui.statusDetailOpen = false;
   ui.completed = false;
   log("pin_placed", { spot_id: spot.id, search_label: ui.searchLabel, entry, coordinates: spot.coordinates });
   render();
@@ -1148,16 +1167,33 @@ function placePin(spotId, label, entry) {
   focusPickup();
 }
 
-function chooseAlternative(spotId) {
+function chooseAlternative(spotId, via = "tap") {
   const spot = getSpot(spotId);
   const origin = selectedSpot();
+  if (spot && origin && spot.id === origin.id) return chooseOriginal(via);
   if (!spot || !origin || !studyCanInteract() || !passengerPickupState().canOpenSuggestions || !alternativesFor(origin).some(a=>a.spot.id===spot.id)) return;
+  if (state.ui.chosenAlternativeId === spot.id) { snapChosenCard(); return; }
   state.ui.chosenAlternativeId = spot.id;
+  state.ui.originalChosen = false;
   state.ui.overridePending = false;
-  log("alternative_selected", { spot_id: spot.id, walk_minutes: walkFor(spot), walk_origin: walkOriginKind(), driver_eta_minutes: spot.driverEta });
+  log("alternative_selected", { spot_id: spot.id, walk_minutes: walkFor(spot), walk_origin: walkOriginKind(), driver_eta_minutes: spot.driverEta, via });
   render();
-  const card = $(".option-card.is-chosen");
-  if (card) card.scrollIntoView({ block: "nearest" });
+  snapChosenCard();
+  focusPickup();
+}
+
+/* The original pin is the last card in the suggestion list; selecting it offers "Keep my pin". */
+function chooseOriginal(via = "tap") {
+  const origin = selectedSpot();
+  const view = passengerPickupState();
+  if (!origin || !studyCanInteract() || !view.canOpenSuggestions || !view.canKeep) return;
+  if (view.originalChosen) { snapChosenCard(); return; }
+  state.ui.originalChosen = true;
+  state.ui.chosenAlternativeId = null;
+  state.ui.overridePending = false;
+  log("original_pin_selected", { spot_id: origin.id, walk_minutes: walkFor(origin), walk_origin: walkOriginKind(), via });
+  render();
+  snapChosenCard();
   focusPickup();
 }
 
@@ -1176,6 +1212,7 @@ function confirmPickup(outcome) {
  const chosen=outcome==="alternative"?getSpot(ui.chosenAlternativeId):origin;
  if (!chosen || !validCoords(chosen.coordinates)) return;
  if (outcome!=="alternative") ui.chosenAlternativeId=null;
+ ui.originalChosen=false;
  ui.screen="confirmed"; ui.overridePending=false;
  const snapshot=spotSnapshot(chosen);
  log("confirmed",{chosen_spot_id:chosen.id,outcome,walk_minutes:walkFor(chosen),walk_origin:walkOriginKind(),chosen:snapshot,displayed:displayedSnapshot(chosen)});
@@ -1651,6 +1688,7 @@ function render() {
   const list = body.querySelector(".browse-list");
   body.classList.toggle("browsing", Boolean(list));
   if (list) list.scrollTop = listScroll;
+  bindBrowseListScroll(list);
   $("#phone").classList.toggle("p4-study",Boolean(state.scenario.p4));
   bindSheetHandlers();
 
@@ -1683,6 +1721,7 @@ function bindSheetHandlers() {
   on("#inspection-done",markInspection);
   on("#locate-confirm", confirmCentre);
   on("#toggle-suggestions", () => toggleSuggestions());
+  on("#toggle-status-detail", toggleStatusDetail);
   on("#open-suggestions", () => toggleSuggestions(true));
   $$("[data-alt]").forEach((button) => button.addEventListener("click", () => chooseAlternative(button.dataset.alt)));
   on("#confirm-pin", () => confirmPickup("original"));
@@ -1692,6 +1731,7 @@ function bindSheetHandlers() {
     state.ui.overridePending = false;
     log("override_cancelled", { spot_id: state.ui.selectedSpotId });
     render();
+    if (passengerPickupState().browsing) { setSheet("half"); snapChosenCard(); focusPickup(); }
   });
   on("#override-confirm", () => {
     log("override_confirmed", { spot_id: state.ui.selectedSpotId });
@@ -1775,11 +1815,63 @@ function bindSheetHandlers() {
   }
 }
 
+/* Scroll the chosen card to the list's snap position so it sits flush at the top. */
+function snapChosenCard() {
+  const list = $(".browse-list");
+  const card = list?.querySelector(".option-card.is-chosen");
+  if (!list || !card) return;
+  const padding = parseFloat(getComputedStyle(list).scrollPaddingTop) || 0;
+  const top = list.scrollTop + card.getBoundingClientRect().top - list.getBoundingClientRect().top - padding;
+  list.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+}
+/* The card resting in the snap position is the selected one. Selection only follows
+   scrolls the participant started themselves, never programmatic ones. */
+let browseScrollArmed = false;
+let browseScrollTimer = null;
+function bindBrowseListScroll(list) {
+  if (!list) return;
+  const arm = () => { browseScrollArmed = true; };
+  ["pointerdown", "touchstart", "wheel"].forEach((type) => list.addEventListener(type, arm, { passive: true }));
+  list.addEventListener("scroll", () => {
+    window.clearTimeout(browseScrollTimer);
+    browseScrollTimer = window.setTimeout(() => {
+      if (!browseScrollArmed) return;
+      browseScrollArmed = false;
+      selectSnappedCard(list);
+    }, 150);
+  }, { passive: true });
+}
+function snappedCard(list) {
+  const padding = parseFloat(getComputedStyle(list).scrollPaddingTop) || 0;
+  const line = list.getBoundingClientRect().top + padding;
+  let best = null, bestDistance = Infinity;
+  list.querySelectorAll(".option-card[data-alt]").forEach((card) => {
+    const distance = Math.abs(card.getBoundingClientRect().top - line);
+    if (distance < bestDistance) { best = card; bestDistance = distance; }
+  });
+  return best;
+}
+function browseSelectionId() {
+  const view = passengerPickupState();
+  return view.chosen?.id || (view.originalChosen ? selectedSpot()?.id : null) || null;
+}
+function selectSnappedCard(list) {
+  if (!document.contains(list) || !passengerPickupState().browsing) return;
+  const card = snappedCard(list);
+  if (card && card.dataset.alt !== browseSelectionId()) chooseAlternative(card.dataset.alt, "scroll");
+}
+function toggleStatusDetail() {
+  if (!passengerPickupState().browsing) return;
+  state.ui.statusDetailOpen = !state.ui.statusDetailOpen;
+  if (state.ui.statusDetailOpen) log("status_detail_opened", { spot_id: state.ui.selectedSpotId, via: "browse_summary" });
+  render();
+}
 function toggleSuggestions(forceOpen) {
   if (!studyCanInteract() || !passengerPickupState().canOpenSuggestions) return;
   const ui = state.ui;
   const next = forceOpen === true ? true : !ui.suggestionsOpen;
   ui.suggestionsOpen = next;
+  ui.statusDetailOpen = false;
   if (next) log("alternatives_opened", { via: "sheet" });
   render();
   setSheet("half");
