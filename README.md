@@ -1,15 +1,15 @@
-# Pickup Pilot passenger study
+# Pickup Pilot passenger and driver studies
 
-Local static prototype updated for the passenger protocol discussed on 8 September 2026.
+Local static prototype with the 8 September passenger protocol and the 9 September driver interview mode.
 Run from this directory with `python3 -m http.server 4173`, then open
 `http://localhost:4173/?facilitator=1` in Helium. A phone-sized layout is shown on desktop.
 Map tiles and the existing Leaflet/Lucide dependencies require a network connection.
 
-## Run a participant
+## Run a passenger participant
 
 1. Open the facilitator panel with Ctrl+Shift+F, three taps on the Pickup Pilot badge,
    or `?facilitator=1`. Enter the participant ID and assigned group A–D.
-2. Choose **Participant study**, enter the participant and group, then press **Prepare session**. This loads P0, followed by P1, P2, P3 and the
+2. Choose **Passenger study**, enter the participant and group, then press **Prepare session**. This loads P0, followed by P1, P2, P3 and the
    group's two P4 situations through **Next scenario**. Use the separate P3-E expiry card
    between P3 and P4. All study tasks use a fixed simulated passenger position and GPS is disabled.
 3. Close the panel to reveal the screen and read the task. Open the panel again and
@@ -43,6 +43,97 @@ Map tiles and the existing Leaflet/Lucide dependencies require a network connect
 9. Open **Exports and event log**. Export task summaries and the event trace before clearing the device log. Exports contain
    all stored attempts, with participant/session IDs in every current-format row.
 
+## Run a driver interview
+
+Open the facilitator panel and choose **Driver interview**. Enter a driver participant ID,
+choose the D4 location (Wendy’s or QUT), then **Prepare session**. Wendy’s is the default.
+The optional **Session details** disclosure records parked, simulator or static walk-through
+context. Complete consent and the background questions separately. The questionnaire allows
+about 35 minutes overall; all interaction takes place while stationary.
+
+1. Read the current scenario script and press **Start task**. Every scenario opens on a
+   dispatch request card showing the passenger's pickup with its status, reason, evidence and
+   source, the simulated arrival time and, after a relocation, why the pickup moved and the
+   passenger's walking time. **Accept request** opens the pickup sheet. **Decline request**
+   asks for a reason, records the decline, then asks the driver to continue as if accepted so
+   the rest of the scenario still runs. Neither choice is timed. Setup and observation notes
+   are folded away beneath the script. D1, D2 and D4 have five-minute guides; D3 has a
+   seven-minute guide, including questions. Elapsed time is recorded without an automatic
+   deadline or an assistance cutoff. Let the driver choose the order of their actions.
+2. **Passenger response** appears only after the driver contacts the passenger or proposes a
+   pickup. Use **Passenger accepts pickup** for the core relocation response, or
+   **Passenger replies** for the default contact reply shown beside it. The facilitator
+   plays the passenger; no message leaves this browser. When both requests are pending,
+   answer each separately.
+3. **Optional response** offers refusal, inability to reach the pickup, no response and a
+   custom contact reply. Record a branch reason or the exact custom reply. Use the same
+   core response across participants and identify optional branches in analysis.
+4. In D3, let the driver inspect the initial suitable information, then **Reveal obstruction**.
+   Read the new scene script and use **Resume after reveal**. The reveal changes the scene
+   only. A Limited access or Construction or event report creates temporary caution,
+   one new driver report, just now, awaiting verification. Previous evidence remains in
+   history. Reporting does not imply passenger acceptance or task completion.
+5. Drivers may contact first, suggest another pickup, continue, wait, cancel or report later.
+   **Another action** records these decisions. Use observations for spoken actions and
+   explanations. **Driver’s stated report timing**, inside Observations, sets the simulated
+   stage before an action; record retrospective timing in notes rather than rewriting
+   already logged events.
+6. **End task** records the facilitator’s observed outcome: completed, completed with
+   assistance, not completed, abandoned, or a prototype fault. Confirmation records a
+   decision and leaves the interview running. After ending, ask the scenario questions
+   and ratings, record observations, then **Next scenario**. Skip requires a reason;
+   restart preserves the earlier attempt. After D4, ask E1–E4 and export.
+
+| Scenario | Initial driver situation |
+| --- | --- |
+| D1 | Hungry Jack’s: no vehicle pickup access in the mall, verified by 4 drivers, 12 minutes ago |
+| D2 | Maru: construction may reduce kerb space, one report from 3 days ago, unverified |
+| D3 | Central Station Ann Street: suitable, 4 drivers, 12 minutes ago; staged barriers |
+| D4 | Passenger has accepted Adelaide Street near City Hall (Wendy’s) or George Street between Margaret and Alice (QUT); three-minute simulated walk |
+
+**Advanced controls → Preview shared passenger information** shows a read-only snapshot
+of the same local records: agreed pickup, proposed pickup, passenger response and original
+pickup information. Return to the driver view to continue. A proposal is separate from the
+agreed pickup until the facilitator accepts it. Reports target the explicitly labelled current,
+original or inspected spot. The map keeps the agreed pickup separate from a pending proposal.
+The driver map normally labels only the agreed pickup. Opening alternatives reveals local
+coloured dots; inspecting one shows its name and details. A pending proposal uses a dashed
+amber marker and a separate label. Acceptance highlights the updated pickup and leaves the
+original as a small grey reference. After any accepted move, including D4's starting state, the
+driver sheet states why the pickup moved: the original's status, reason and evidence as the
+passenger saw them, in one line under the acceptance notice. The passenger's simulated walking
+time is shown beside the driver's arrival time. D4 ratings are therefore collected with the
+original's reason visible; note this when interpreting D4.1 and D4.4. The driver basemap is muted; passenger map styling and
+scenario fixtures are unchanged.
+Map lines and arrival times are simulated; they are not live navigation.
+
+Driver summaries carry `mode: driver`, `session_role: driver`, D1–D4 IDs, the dispatch
+decision (accepted, or declined with reason and whether the driver continued as accepted),
+first recorded UI action after acceptance, report results and stated timing, contact and agreement states, observations and the
+facilitator outcome. Filter by mode when analysing combined exports. Passenger P4 planned
+rows are never added to driver sessions. Task timing describes the simulated interaction;
+spoken intentions belong in the facilitator notes. The existing questionnaire remains the
+instrument for ratings and interview responses.
+
+Reload retains the driver session, accepted reports and passenger response. Starting a new
+scenario resets its fixtures. Starting a passenger session restores the passenger setup and
+P0–P4 sequence. Existing passenger fixtures, explanation conditions, deadlines and P3 outcome
+rules are preserved. There is no connection to another participant’s browser or device.
+
+Driver implementation reference: [Driver-Questionnaire-Draft, 7 September](https://docs.google.com/document/d/1gv5rL5VgkF76vD_UMSJTEkv9NjGsmJ62/edit).
+The [team notebook](https://docs.google.com/document/d/1DzA8ImKVdHhGS2rjHYYRlwjBP0kle8dZTo6Yk8AjaVY/edit)
+permits scripted other-party responses and local shared state, but its Row 3 still describes
+an earlier three-screen interview. This build implements the discussed D1–D4 questionnaire;
+the online notebook and questionnaire have not been edited.
+The dispatch request card is an addition to the 7 September questionnaire: the D1–D4 scripts
+in `data.js` now open with "A pickup request has come in" instead of assuming the request was
+already accepted, which exercises the notebook's "drivers can choose whether to accept the
+dispatch" scope item. Update the questionnaire scripts to match before the sessions.
+
+For a local driver preview, use `?scenario=D1&pid=DEMO&facilitator=1`.
+For the QUT D4 fixture, use `?scenario=D4&driverLocation=qut&pid=DEMO&facilitator=1`.
+These links prepare an attempt; press **Start task** to interact.
+
 ## Preview and advanced controls
 
 Choose **Preview** in the Mode selector for an untimed walkthrough. Selecting a preview
@@ -51,7 +142,7 @@ alternatives and reporting, including the P3 reveal stages. It has no task deadl
 button. Preview events carry `mode: preview` in raw exports and are excluded from participant
 task summaries, including planned P4 rows.
 
-Switch back to **Participant study** and press **Prepare session** to begin a fresh participant
+Switch back to **Passenger study** and press **Prepare session** to begin a fresh participant
 session at P0. Fixtures, reports and selections reset; previous logs remain available. During
 participant tasks, mode changes and manual restarts are locked until the task ends.
 
@@ -73,7 +164,7 @@ are separate from abandonment, failure and timeout. Any skipped assigned P4 situ
 
 
 **Advanced controls** contains manual scenario loading, **Restart scenario** and **Set up
-another participant**. Driver views and fault controls are available in **Technical testing**.
+another participant**. Legacy R3 driver demonstrations and fault controls remain in **Technical testing**. Use **Driver interview** for D1–D4.
 **Exports and event log** keeps downloads and log inspection out of the main task flow.
 
 ## Scenario fixtures

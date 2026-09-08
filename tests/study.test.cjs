@@ -10,7 +10,7 @@ function harness() {
  function el(key) {if (!elements.has(key)) elements.set(key,{value:'',checked:false,hidden:true,options:[],dataset:{},innerHTML:'',textContent:'',open:false,addEventListener(){},querySelectorAll(){return[];},querySelector(){return null;},classList:{add(){},remove(){},toggle(){}},getBoundingClientRect(){return{top:0,bottom:50,height:800};},clientHeight:800,clientWidth:400,style:{setProperty(){}},close(){this.open=false;},show(){this.open=true;},focus(){},scrollIntoView(){},append(){}}); return elements.get(key);}
  const chain=new Proxy({}, {get:(_,key)=>['getNorth','getSouth','getWest'].includes(key)?()=>0:key==='getSize'?()=>({x:400,y:800}):()=>chain});
  const context=vm.createContext({console,crypto,structuredClone,URLSearchParams,Date:class extends Date {constructor(...v){super(...(v.length?v:[now]));}static now(){return now;}},navigator:{userAgent:'test-device'},document:{querySelector:el,querySelectorAll:()=>[],dispatchEvent(){},addEventListener(){},createElement:()=>el('new')},CustomEvent:class{},localStorage:{getItem(){return null;},setItem(){}},window:{setInterval(){},setTimeout(){},addEventListener(){},location:{search:'',pathname:'/',reload(){}},history:{replaceState(){}}},L:new Proxy({}, {get:()=>()=>chain}),FormData:class{get(){return el('reason').value;}}});
- for(const file of ['data.js','log.js','study.js','app.js']) vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8').replace(/\nboot\(\);\s*$/,''),context,{filename:file});
+ for(const file of ['data.js','log.js','study.js','driver.js','app.js']) vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8').replace(/\nboot\(\);\s*$/,''),context,{filename:file});
  vm.runInContext('render=()=>{}; setSheet=()=>{}; focusPickup=()=>{}; centreMapOnUserPosition=()=>{}; refreshIcons=()=>{}; showToast=()=>{};',context);
  const run=code=>vm.runInContext(code,context);
  return {run,el,advance:ms=>{now+=ms;},load:(id,group=id==='P4-QUT-EXP'?'C':id==='P4-QUT-NOEXP'?'D':id==='P4-WENDYS-NOEXP'?'B':'A')=>run(`loadScenario(${JSON.stringify(id)},"TEST",null,1,{group:${JSON.stringify(group)}})`),start:()=>run('startTask()'),json:code=>JSON.parse(run(`JSON.stringify(${code})`))};
@@ -186,7 +186,7 @@ test('invalid locations and ended tasks expose no passenger mutation controls',(
 });
 test('P4 retains both suitable alternatives when comparing a cautionary original',()=>{
  const h=harness();for(const id of ['P4-WENDYS-EXP','P4-WENDYS-NOEXP']) {
-  h.load(id);h.start();h.run('chooseAlternative("ann-albert")');const html=h.run('passengerPickupTemplate(selectedSpot())');assert.equal((html.match(/data-alt=/g)||[]).length,3);assert.match(html,/id="confirm-alternative"/);
+  h.load(id);h.start();h.run('chooseAlternative("ann-albert")');const html=h.run('passengerPickupTemplate(selectedSpot())');assert.deepEqual([...html.matchAll(/data-alt="([^"]+)"/g)].map(m=>m[1]).filter(id=>id!=='wendys'),['adelaide-street','ann-albert','george-adelaide']);assert.match(html,/id="confirm-alternative"/);
   h.run('requestPickupOverride();onPinTap("adelaide-street")');assert.equal(h.run('state.ui.chosenAlternativeId'),'ann-albert');assert.equal(h.run('state.ui.overridePending'),true);
   h.run('confirmPickup("alternative")');assert.equal(h.run('state.attempt.status'),'running');h.run('confirmPickup("override")');assert.equal(h.run('state.attempt.summary.decision'),'override');
  }
@@ -194,4 +194,144 @@ test('P4 retains both suitable alternatives when comparing a cautionary original
 test('driver relocation suggestions follow the current warning and candidate availability',()=>{
  const h=harness();h.load('R3-3');assert.equal(h.run('canDriverSuggest()'),true);h.run('selectedSpot().status="suitable"');assert.equal(h.run('canDriverSuggest()'),false);assert.doesNotMatch(h.run('driverTemplate()'),/id="driver-suggest"/);
  h.run('selectedSpot().status="caution";state.scenario.alternativeIds=[]');assert.equal(h.run('canDriverSuggest()'),false);h.run('selectedSpot().coordinates=null');assert.match(h.run('driverTemplate()'),/id="driver-confirm" disabled/);
+});
+
+test('driver setup loads D1–D4, preserves assigned D4 location and uses no passenger deadline',()=>{
+ const h=harness();h.run('changeMode("driver")');h.el('#fac-pid').value='D07';h.el('#fac-driver-location').value='qut';h.el('#fac-driver-context').value='simulator';h.run('prepareSession();renderStudyControls()');
+ assert.equal(h.run('state.session.mode'),'driver');assert.equal(h.el('#fac-passenger-group').hidden,true);assert.equal(h.run('state.session.useGps'),false);
+ assert.deepEqual(h.json('assignedSequence()'),['D1','D2','D3','D4']);
+ for (const id of ['D1','D2','D3','D4']) {
+  assert.equal(h.run('state.scenario.id'),id);h.start();h.advance(600000);h.run('checkStudyDeadline()');assert.equal(h.run('state.attempt.status'),'running');
+  if(id==='D4') {assert.equal(h.run('state.scenario.presetSpot'),'qut');assert.equal(h.run('driverPickupTarget().id'),'george-qut');assert.equal(h.run('walkFor(driverPickupTarget())'),3);}
+  h.run('finishTask("driver_completed");loadNextTask()');
+ }
+ assert.equal(h.run('EventLog.summaries().length'),4);assert.ok(h.json('EventLog.summaries()').every(r=>r.mode==='driver' && r.session_role==='driver' && !r.scenario_id.startsWith('P')));
+});
+test('driver proposals need a separate accepted response before changing the agreed pickup',()=>{
+ const h=harness();h.load('D1');h.start();h.run('driverAcceptRequest()');h.run('driverSuggest("charlotte-local")');
+ assert.equal(h.run('driverPickupTarget().id'),'queen-street');assert.equal(h.run('driverPassengerSnapshot().proposed_pickup.spot_id'),'charlotte-local');
+ h.el('#fac-driver-response').value='declined';h.run('applyDriverPassengerResponse()');assert.equal(h.run('driverInterviewState().passengerResponse'),'pending');
+ h.el('#fac-driver-response-note').value='Optional refusal probe';h.run('applyDriverPassengerResponse()');assert.equal(h.run('driverPickupTarget().id'),'queen-street');assert.equal(h.run('driverInterviewState().pendingId'),null);
+ h.run('driverSuggest("elizabeth-street")');h.el('#fac-driver-response').value='accepted';h.run('applyDriverPassengerResponse()');assert.equal(h.run('driverPickupTarget().id'),'elizabeth-street');assert.equal(h.run('driverPassengerSnapshot().active_pickup.spot_id'),'elizabeth-street');
+ h.run('driverContinue()');assert.equal(h.run('state.attempt.status'),'running');h.run('finishTask("driver_completed")');assert.equal(h.json('state.attempt.summary').chosen.spot_id,'elizabeth-street');
+});
+test('D3 reveal changes scene only; a driver report updates both views without accepting relocation',()=>{
+ const h=harness();h.load('D3');h.start();h.run('driverAcceptRequest()');h.advance(5000);h.run('revealObstruction()');assert.equal(h.run('driverPickupTarget().status'),'suitable');
+ h.advance(4000);h.run('finishReveal()');h.run('driverInterviewState().workflowStage="after_collection";openReport({mode:"report",actor:"driver",spotId:"ann-street"})');h.el('reason').value='Limited access';h.run('handleReportSubmit({preventDefault(){}})');
+ assert.equal(h.run('driverPickupTarget().status'),'caution');assert.match(h.run('freshnessText(driverPickupTarget())'),/One driver report, just now/);
+ assert.equal(h.run('driverPassengerSnapshot().active_pickup.suitability'),'caution');assert.equal(h.run('driverPickupTarget().history[0].report_count'),4);assert.equal(h.run('driverInterviewState().alternativeAgreed'),false);
+ h.run('driverSuggest("edward-central")');h.el('#fac-driver-response').value='accepted';h.run('applyDriverPassengerResponse();driverContinue();finishTask("driver_completed")');
+ const s=h.json('state.attempt.summary');assert.equal(s.script_pause_ms,4000);assert.equal(s.first_action.event,'report_opened');assert.equal(s.report_results[0].workflow_stage,'after_collection');assert.equal(s.chosen.spot_id,'edward-central');
+});
+test('driver can contact or defer reporting, with manually recorded outcomes and no assistance cutoff',()=>{
+ const h=harness();h.load('D2');h.start();h.run('driverAcceptRequest()');h.run('driverContact()');h.el('#fac-driver-response').value='contact_reply';h.run('applyDriverPassengerResponse()');
+ assert.equal(h.run('driverInterviewState().contactPending'),false);assert.equal(h.run('driverInterviewState().firstAction.event'),'driver_contact_requested');
+ h.el('#driver-other-choice').value='report_later';h.run('driverOtherAction()');
+ for(let i=0;i<3;i++){h.el('#fac-observation-type').value='assistance';h.el('#fac-observation-note').value='Recorded help';h.run('recordObservation()');}
+ assert.equal(h.run('state.attempt.status'),'running');h.el('#fac-end-reason').value='driver_assisted';h.run('confirmTaskEnd()');
+ assert.equal(h.run('state.attempt.summary.task_outcome'),'completed_with_assistance');assert.equal(h.run('state.attempt.summary.decision'),'report_later');assert.equal(h.run('state.attempt.summary.confirmation_occurred'),false);
+});
+test('driver mirror is read-only and driver changes reset before passenger testing',()=>{
+ const h=harness();h.load('D3');h.start();h.run('driverAcceptRequest()');h.run('openReport({mode:"report",actor:"driver",spotId:"ann-street"})');h.el('reason').value='Limited access';h.run('handleReportSubmit({preventDefault(){}});toggleDriverMirror()');
+ assert.equal(h.run('studyCanInteract()'),false);h.run('driverSuggest("edward-central");driverContinue()');assert.equal(h.run('driverInterviewState().pendingId'),null);assert.equal(h.run('driverInterviewState().confirmed'),false);
+ h.run('toggleDriverMirror();finishTask("driver_completed");changeMode("study")');assert.equal(h.run('state.scenario.id'),'P0');assert.equal(h.run('getSpot("ann-street").status'),'suitable');assert.equal(h.run('state.ui.driverInterview'),undefined);assert.equal(h.run('state.session.mode'),'study');
+});
+test('driver summaries separate faults from participant outcomes and preserve skips and retries',()=>{
+ const h=harness();h.load('D1');h.start();h.run('driverAcceptRequest()');h.run('finishTask("technical_fault")');assert.equal(h.run('state.attempt.summary.task_outcome'),'technical_fault');
+ h.run('loadScenario("D1","TEST",null,1,{reset:true})');assert.equal(h.run('state.session.attemptKind'),'retry');assert.equal(h.run('driverInterviewState().pendingId'),null);
+ h.run('openSkipScenario()');h.el('#fac-skip-reason').value='Driver already discussed it';h.run('confirmScenarioSkip()');assert.equal(h.run('state.scenario.id'),'D2');
+ assert.equal(h.json('EventLog.summaries().find(r=>r.skipped)').task_outcome,'skipped_before_start');assert.match(h.run('EventLog.summaryCSV()'),/first_action,dispatch_decision,request_accepted,report_results,passenger_contacted/);
+});
+
+test('driver facilitator shows response controls only when needed and core responses preserve independent requests',()=>{
+ const h=harness();h.load('D1');h.start();h.run('driverAcceptRequest()');h.run('renderStudyControls()');assert.equal(h.el('#fac-driver-controls').hidden,true);
+ h.run('driverSuggest("charlotte-local");driverContact();renderStudyControls()');assert.equal(h.el('#fac-driver-controls').hidden,false);assert.equal(h.el('#fac-driver-accept').hidden,false);assert.equal(h.el('#fac-driver-reply').hidden,false);
+ h.run('applyDriverPassengerResponse("accepted");renderStudyControls()');assert.equal(h.el('#fac-driver-accept').hidden,true);assert.equal(h.run('driverInterviewState().contactPending'),true);
+ h.run('applyDriverPassengerResponse("contact_reply");renderStudyControls()');assert.equal(h.el('#fac-driver-controls').hidden,true);assert.equal(h.run('driverPickupTarget().id'),'charlotte-local');
+});
+test('D4 reload preserves location, agreed pickup and pending passenger response',()=>{
+ const h=harness();h.run('loadScenario("D4","RESTORE",null,4,{driverLocation:"qut",driverContext:"simulator"})');h.start();h.run('driverAcceptRequest()');h.run('driverSuggest("alice-qut")');
+ h.run('var savedState=JSON.stringify({version:PROTOTYPE_VERSION,session:state.session,scenarioId:state.scenario.id,spots:state.spots,ui:state.ui,attempt:state.attempt});localStorage.getItem=()=>savedState;state.ui=defaultUi();restore()');
+ assert.equal(h.run('state.scenario.presetSpot'),'qut');assert.equal(h.run('driverPickupTarget().id'),'george-qut');assert.equal(h.run('driverInterviewState().pendingId'),'alice-qut');assert.equal(h.run('state.session.driverContext'),'simulator');assert.equal(h.run('state.attempt.status'),'running');
+ h.run('applyDriverPassengerResponse("accepted");driverContinue();finishTask("driver_completed")');assert.equal(h.run('state.attempt.summary.chosen.spot_id'),'alice-qut');
+});
+test('driver scenarios open on a dispatch request card; a decline is recorded and the scenario continues as accepted',()=>{
+ const h=harness();h.load('D1');
+ let html=h.run('driverTemplate()');assert.match(html,/New pickup request/);assert.match(html,/Pickup not recommended/);assert.match(html,/No vehicle pickup access in the pedestrian mall/);assert.match(html,/Verified by 4 drivers, 12 minutes ago/);assert.match(html,/Source: driver reports/);assert.doesNotMatch(html,/id="driver-continue"|id="driver-contact"/);
+ h.run('driverAcceptRequest()');assert.equal(h.run('driverInterviewState().dispatch'),'pending');
+ h.start();h.run('driverSuggest("charlotte-local");driverContact();driverContinue()');assert.equal(h.run('driverInterviewState().pendingId'),null);assert.equal(h.run('driverInterviewState().contacted'),false);assert.equal(h.run('driverInterviewState().confirmed'),false);
+ assert.equal(h.run('driverMapPresentation()[0].interactive'),false);assert.equal(h.run('driverInterviewState().workflowStage'),'dispatch');assert.equal(h.run('driverMapCaption(driverMapPresentation()[0])'),'Requested pickup');
+ h.run('toggleDriverMirror()');assert.match(h.run('driverTemplate()'),/Waiting for a driver/);h.run('toggleDriverMirror()');
+ h.el('#driver-decline-reason').value='other';h.el('#driver-decline-note').value='';h.run('driverDeclineRequest()');assert.equal(h.run('driverInterviewState().dispatch'),'pending');
+ h.el('#driver-decline-reason').value='pickup_spot';h.advance(3000);h.run('driverDeclineRequest()');
+ assert.equal(h.run('driverInterviewState().dispatch'),'declined');assert.match(h.run('driverTemplate()'),/continue as if you had accepted/);
+ h.run('driverAcceptRequest()');assert.equal(h.run('driverInterviewState().dispatch'),'declined');
+ h.advance(2000);h.run('driverAcceptRequest(true)');assert.equal(h.run('driverInterviewState().dispatch'),'accepted');assert.equal(h.run('driverInterviewState().workflowStage'),'safely_stopped');
+ assert.equal(h.run('driverMapPresentation()[0].interactive'),true);assert.match(h.run('driverTemplate()'),/id="driver-continue"/);assert.equal(h.run('driverMapCaption(driverMapPresentation()[0])'),'Agreed pickup');
+ h.run('driverSuggest("charlotte-local")');assert.equal(h.run('driverInterviewState().pendingId'),'charlotte-local');assert.equal(h.run('driverInterviewState().firstAction.event'),'driver_suggested_relocation');
+ h.run('finishTask("driver_completed")');const s=h.json('state.attempt.summary');
+ assert.deepEqual(s.dispatch_decision,{decision:'declined',reason:'pickup_spot',note:'',declined_at_ms:3000,continued_as_accepted:true,accepted_at_ms:5000});assert.equal(s.request_accepted,true);
+ assert.deepEqual(h.json('EventLog.all().filter(e=>["driver_request_declined","driver_request_accepted"].includes(e.event)).map(e=>[e.event,e.payload.suitability,e.payload.after_decline])'),[['driver_request_declined','blocked',null],['driver_request_accepted','blocked',true]]);
+ h.load('D4');h.start();html=h.run('driverTemplate()');assert.match(html,/Passenger accepted a move to this pickup/);assert.match(html,/Moved from Wendy’s/);assert.match(html,/Passenger walking, about 3 minutes/);assert.match(html,/Suitable for pickup/);
+ h.run('driverAcceptRequest()');assert.deepEqual(h.json('driverInterviewState().dispatchDecision'),{decision:'accepted',accepted_at_ms:0});
+ h.run('finishTask("driver_completed")');assert.equal(h.run('state.attempt.summary.request_accepted'),true);
+ h.load('D2');h.start();h.run('finishTask("driver_completed")');assert.equal(h.run('state.attempt.summary.request_accepted'),false);assert.equal(h.run('state.attempt.summary.dispatch_decision'),null);
+});
+test('D4 driver sheet states why the pickup moved and pairs passenger walking time with driver arrival',()=>{
+ const h=harness();h.load('D4');h.start();h.run('driverAcceptRequest()');
+ let html=h.run('driverTemplate()');
+ assert.match(html,/Passenger accepted the updated pickup/);
+ assert.match(html,/Moved from Wendy’s, Albert \/ Adelaide\. Pickup may be difficult: driver cannot legally stop here\. Verified by 3 drivers, 8 minutes ago\./);
+ assert.match(html,/Simulated arrival: 4 minutes · Passenger walking, about 3 minutes/);
+ h.run('loadScenario("D4","QUT",null,4,{driverLocation:"qut"})');h.start();h.run('driverAcceptRequest()');html=h.run('driverTemplate()');
+ assert.match(html,/Moved from QUT Gardens Point, George Street\. Pickup may be difficult: driver cannot legally stop here\./);assert.match(html,/Passenger walking, about 3 minutes/);
+ h.load('D1');h.start();h.run('driverAcceptRequest()');html=h.run('driverTemplate()');
+ assert.doesNotMatch(html,/Moved from|Passenger walking/);
+ h.run('driverSuggest("charlotte-local");applyDriverPassengerResponse("accepted")');html=h.run('driverTemplate()');
+ assert.match(html,/Moved from Hungry Jack’s, Queen Street Mall\. Pickup not recommended: no vehicle pickup access in the pedestrian mall\. Verified by 4 drivers, 12 minutes ago\./);
+ assert.match(html,/Passenger walking, about \d+ minutes/);
+});
+test('driver reporting keeps the original and accepted alternative targets explicit',()=>{
+ const h=harness();h.load('D4');h.start();h.run('driverAcceptRequest()');h.run('state.ui.driverInspectId="wendys"');assert.equal(h.run('driverPickupTarget().id'),'adelaide-street');
+ assert.match(h.run('driverTemplate()'),/id="driver-report-original"/);h.run('openReport({actor:"driver",mode:"report",spotId:driverPickupTarget().id})');h.el('reason').value='Limited access';h.run('handleReportSubmit({preventDefault(){}})');
+ assert.equal(h.run('getSpot("adelaide-street").status'),'caution');assert.equal(h.run('getSpot("wendys").reports.length'),0);assert.equal(h.run('driverPassengerSnapshot().active_pickup.suitability'),'caution');
+ h.run('finishTask("driver_completed");driverContact();driverSuggest("ann-albert")');assert.equal(h.run('driverInterviewState().contacted'),false);assert.equal(h.run('driverInterviewState().pendingId'),null);
+});
+
+test('driver map reveals local alternatives only while browsing and labels the inspected spot',()=>{
+ const h=harness();h.load('D1');
+ assert.deepEqual(h.json('driverMapPresentation().map(p=>p.spot.id)'),['queen-street']);
+ assert.equal(h.run('driverMapPresentation()[0].interactive'),false);
+ h.start();h.run('state.ui.driverSuggestOpen=true');
+ assert.deepEqual(h.json('driverMapPresentation().map(p=>p.spot.id).sort()'),h.json('[driverPickupTarget().id,...driverAlternatives().map(a=>a.spot.id)].sort()'));
+ assert.deepEqual(h.json('driverMapPresentation().filter(p=>p.labelled).map(p=>p.spot.id)'),['queen-street']);
+ h.run('onPinTap("charlotte-local")');
+ assert.deepEqual(h.json('driverMapPresentation().filter(p=>p.labelled).map(p=>p.spot.id)'),['charlotte-local']);
+ assert.equal(h.run('driverPickupTarget().id'),'queen-street');assert.equal(h.run('driverInterviewState().pendingId'),null);
+ h.run('state.ui.driverSuggestOpen=false');
+ assert.deepEqual(h.json('driverMapPresentation().map(p=>p.spot.id)'),['queen-street']);
+ assert.equal(h.run('driverMapPresentation()[0].labelled'),true);
+});
+test('driver map separates proposals from agreement and keeps the old pickup as a quiet reference',()=>{
+ const h=harness();h.load('D1');h.start();h.run('driverAcceptRequest()');h.run('driverSuggest("charlotte-local")');
+ assert.deepEqual(h.json('driverMapPresentation().map(p=>[p.spot.id,p.kind,p.labelled])'),[['queen-street','agreed',true],['charlotte-local','proposed',true]]);
+ assert.equal(h.run('driverMapPresentation().find(p=>p.spot.id==="charlotte-local").below'),true);
+ assert.equal(h.run('driverMapPresentation().find(p=>p.spot.id==="queen-street").below'),false);
+ h.run('applyDriverPassengerResponse("accepted")');
+ assert.deepEqual(h.json('driverMapPresentation().map(p=>[p.spot.id,p.kind,p.labelled])'),[['charlotte-local','agreed',true],['queen-street','original',false]]);
+ assert.equal(h.run('driverMapPresentation()[0].accepted'),true);
+ assert.equal(h.run('driverMapPresentation()[1].interactive'),false);
+});
+test('driver map handles both D4 locations, read-only mirrors and invalid coordinates',()=>{
+ const h=harness();
+ for(const location of ['wendys','qut']) {
+  h.run(`loadScenario("D4","MAP",null,4,{driverLocation:${JSON.stringify(location)}})`);
+  assert.equal(h.run('driverMapPresentation().length'),2);
+  assert.equal(h.run('driverMapPresentation().filter(p=>p.labelled).length'),1);
+  assert.equal(h.run('driverMapPresentation()[0].accepted'),true);
+  h.start();h.run('state.ui.driverSuggestOpen=true;driverInterviewState().mirror=true');
+  assert.equal(h.run('driverMapPresentation().some(p=>p.interactive)'),false);
+  h.run('getSpot(driverInterviewState().originalId).coordinates=null');
+  assert.equal(h.run('driverMapPresentation().some(p=>p.kind==="original")'),false);
+ }
 });

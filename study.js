@@ -5,7 +5,7 @@ function newAttempt() {
 function isPreview() { return state.session.mode === "preview"; }
 function sessionPrepared() { return state.session.prepared ?? Boolean(state.scenario.study); }
 function timedTaskRunning() { return !isPreview() && state.scenario.study && state.attempt.status === "running"; }
-function assignedSequence() { return ["P0", "P1", "P2", "P3", ...STUDY_GROUPS[state.session.group || "A"]]; }
+function assignedSequence() { if (isDriverInterview()) return [...DRIVER_SEQUENCE]; return ["P0", "P1", "P2", "P3", ...STUDY_GROUPS[state.session.group || "A"]]; }
 function supportingVisible() { return state.session.role === "driver" || state.scenario.variant !== "unexplained"; }
 function spotSnapshot(spot) {
  if (!spot) return null;
@@ -22,6 +22,7 @@ function elapsedMs(now=Date.now()) {
  return Math.max(0,(a.endedAt || a.pausedAt || now)-a.startedAt-a.pausedMs);
 }
 function studyCanInteract() {
+ if (isDriverInterview() && driverInterviewState()?.mirror) return false;
  if (!state.scenario.study) return true;
  if (isPreview()) return state.attempt.status !== "ended" && !state.attempt.pausedAt;
  checkStudyDeadline();
@@ -39,15 +40,15 @@ function startTask() {
  if (isPreview() || !sessionPrepared() || !state.scenario.study || a.status!=="ready") return;
  if (state.scenario.p4 && STUDY_GROUPS[state.session.group]?.[state.session.orderPosition-1]!==state.scenario.id) { showToast("Check allocation","Load the condition and order assigned to this study group."); return; }
  a.status="running"; a.startedAt=Date.now();
- state.session.thinkAloud=state.scenario.p4?false:$("#fac-think-aloud").checked;
+ state.session.thinkAloud=(state.scenario.p4 || isDriverInterview())?false:$("#fac-think-aloud").checked;
  log("task_started",{limit_seconds:state.scenario.limitSeconds,think_aloud:state.session.thinkAloud,simulated_start:state.ui.userPosition,fixture:state.spots.map(spotSnapshot)});
  openFacilitator(false); render();
 }
 /* Optional P3 script pause. Passenger controls are never gated on it; the facilitator prompts the participant before confirmation. */
-function scriptPaused() { return state.scenario.id==="P3" && Boolean(state.attempt.pausedAt); }
+function scriptPaused() { return ["P3","D3"].includes(state.scenario.id) && Boolean(state.attempt.pausedAt); }
 function revealObstruction() {
  const a=state.attempt;
- if (state.scenario.id!=="P3" || a.status!=="running" || a.pausedAt) return;
+ if (!["P3","D3"].includes(state.scenario.id) || a.status!=="running" || a.pausedAt || (isDriverInterview() && a.revealedAt)) return;
  a.pausedAt=Date.now(); a.revealedAt=a.revealedAt || a.pausedAt;
  log("obstruction_reveal_started",{spot_id:state.scenario.presetSpot,selected_spot_id:state.ui.selectedSpotId,target_selected:state.ui.selectedSpotId===state.scenario.presetSpot,scene:"Temporary barriers are blocking the kerb",status_unchanged:getSpot(state.scenario.presetSpot).status});
  openFacilitator(false); render();
@@ -68,6 +69,10 @@ function finishTask(reason,chosen=null,decision=null,endAt=Date.now()) {
   log("preview_ended", {reason, chosen:spotSnapshot(chosen)});
   closeReport(false); render(); return;
  }
+ if (isDriverInterview()) {
+  a.summary=driverFinishSummary(reason,endAt);
+  log("task_ended",a.summary); closeReport(false); render(); return;
+ }
  const confirmed=Boolean(chosen);
  const p3Requirements=state.scenario.id!=="P3" || (a.reportAccepted && chosen && chosen.id!==state.scenario.presetSpot);
  const outcome=skipped?reason:reason==="abandoned"?"abandoned":confirmed&&p3Requirements?(a.assists?"assisted":"independent"):"incomplete";
@@ -82,7 +87,7 @@ function finishTask(reason,chosen=null,decision=null,endAt=Date.now()) {
 }
 function checkStudyDeadline() {
  const a=state.attempt;
- if (isPreview() || !state.scenario.study || !a || a.status!=="running" || a.pausedAt) return;
+ if (isPreview() || isDriverInterview() || !state.scenario.study || !a || a.status!=="running" || a.pausedAt) return;
  const elapsed=elapsedMs();
  if (state.scenario.p4 && elapsed>=120000 && !a.arrivalMarked) {
   a.arrivalMarked=true; log("arrival_cue_elapsed",{seconds:120,external_timer:true});
@@ -111,12 +116,12 @@ function prepareSession() {
  if (timedTaskRunning()) return;
  const participant = $("#fac-pid").value.trim();
  if (!participant) { showToast("Participant ID required", "Enter the participant ID before preparing the session."); $("#fac-pid").focus(); return; }
- loadScenario("P0", participant, null, 1, {mode:"study", prepared:true, newSession:true, group:$("#fac-group").value});
+ loadScenario(state.session.mode === "driver" ? "D1" : "P0", participant, null, 1, {mode:state.session.mode === "driver" ? "driver" : "study", prepared:true, newSession:true, group:$("#fac-group").value,driverLocation:$("#fac-driver-location").value,driverContext:$("#fac-driver-context").value});
  openFacilitator(true);
 }
 function changeMode(mode) {
  if (timedTaskRunning()) { $("#fac-mode").value=state.session.mode || "study"; showToast("End the current task first", "Use End task to record its outcome before changing mode."); return; }
- loadScenario(mode === "technical" ? "FREE" : "P0", state.session.participantId, null, 1, {mode, prepared:false, newSession:true, group:state.session.group});
+ loadScenario(mode === "technical" ? "FREE" : mode === "driver" ? "D1" : "P0", state.session.participantId, null, 1, {mode, prepared:false, newSession:true, group:state.session.group});
  openFacilitator(true);
 }
 function loadNextTask(startSequence=false) {
@@ -125,12 +130,12 @@ function loadNextTask(startSequence=false) {
  const sequence=assignedSequence();
  const next=sequence.indexOf(state.scenario.id)+1;
  if (next>=sequence.length) return;
- loadScenario(sequence[next],state.session.participantId,null,next>=4?next-3:1,{group:state.session.group,prepared:true});
+ loadScenario(sequence[next],state.session.participantId,null,isDriverInterview()?next+1:next>=4?next-3:1,{group:state.session.group,prepared:true});
  openFacilitator(true);
 }
 function confirmTaskEnd() {
  const reason=$("#fac-end-reason").value;
- if (!["facilitator_stop","abandoned"].includes(reason)) { showToast("Choose a reason", "Select who ended the task before confirming."); return; }
+ if (!(isDriverInterview() ? ["driver_completed","driver_assisted","facilitator_stop","abandoned","technical_fault"] : ["facilitator_stop","abandoned"]).includes(reason)) { showToast("Choose a reason", "Select who ended the task before confirming."); return; }
  finishTask(reason); $("#fac-end-options").hidden=true;
 }
 function canSkipScenario() {
@@ -184,7 +189,7 @@ function renderStudyControls() {
  $("#fac-skip-task").hidden=!canSkipScenario();
  if (!canSkipScenario() || $("#fac-skip-options").dataset.attemptId!==a.id) $("#fac-skip-options").hidden=true;
  if (!running) $("#fac-end-options").hidden=true;
- $("#fac-reveal").hidden=state.scenario.id!=="P3" || a.status!=="running" || Boolean(a.pausedAt);
+ $("#fac-reveal").hidden=!["P3","D3"].includes(state.scenario.id) || a.status!=="running" || Boolean(a.pausedAt) || (isDriverInterview() && Boolean(a.revealedAt));
  $("#fac-reveal").disabled=false;
  $("#fac-reveal-end").hidden=!scriptPaused() || a.status!=="running";
  $("#fac-reveal-end").disabled=false;
@@ -204,26 +209,32 @@ function renderStudyControls() {
  $("#fac-load").disabled=running;
  $("#fac-reset").disabled=running || (!preview && !technical && !prepared);
  $("#fac-scenario").disabled=running;
+ renderDriverControls();
  $("#fac-allocation").hidden=!state.scenario.p4;
  $("#fac-allocation").textContent=`${state.session.variant === "unexplained" ? "NOEXP" : "EXP"} · position ${state.session.orderPosition} · group ${state.session.group}`;
 }
 function studyNotice() {
  const a=state.attempt;
  if (!state.scenario.study) return "";
+ if (isDriverInterview() && driverInterviewState()?.mirror) return "";
  if (a.status==="ended" && state.ui.screen!=="confirmed") return '<header class="sheet-header"><h1>Task finished</h1><p>Please hand the device back to the facilitator.</p></header>';
  if (scriptPaused()) return '<header class="sheet-header"><p class="eyebrow">Scenario update</p><h1>Temporary barriers are blocking the kerb.</h1><p>Please listen to the facilitator.</p></header>';
  return "";
 }
 function initStudyControls() {
  $("#fac-start-task").addEventListener("click",startTask);
- $("#fac-stop-task").addEventListener("click",()=>{ $("#fac-skip-options").hidden=true; $("#fac-end-options").hidden=false; $("#fac-end-reason").value=""; $("#fac-end-reason").focus(); });
+ $("#fac-stop-task").addEventListener("click",()=>{ $("#fac-skip-options").hidden=true; $("#fac-end-options").hidden=false;
+  $("#fac-end-reason").innerHTML = isDriverInterview()
+   ? '<option value="">Select an observed outcome</option><option value="driver_completed">Completed</option><option value="driver_assisted">Completed with assistance</option><option value="facilitator_stop">Not completed</option><option value="abandoned">Participant abandoned the scenario</option><option value="technical_fault">Prototype fault prevented completion</option>'
+   : '<option value="">Select a reason</option><option value="facilitator_stop">Facilitator ended the task</option><option value="abandoned">Participant chose to stop</option>';
+  $("#fac-end-reason").value=""; $("#fac-end-reason").focus(); });
  $("#fac-skip-task").addEventListener("click",openSkipScenario);
  $("#fac-skip-confirm").addEventListener("click",confirmScenarioSkip);
  $("#fac-skip-cancel").addEventListener("click",()=>{ $("#fac-skip-options").hidden=true; $("#fac-skip-reason").value=""; });
  $("#fac-end-confirm").addEventListener("click",confirmTaskEnd);
  $("#fac-end-cancel").addEventListener("click",()=>{ $("#fac-end-options").hidden=true; });
  $("#fac-mode").addEventListener("change",()=>changeMode($("#fac-mode").value));
- $("#fac-new-session").addEventListener("click",()=>changeMode("study"));
+ $("#fac-new-session").addEventListener("click",()=>changeMode(isDriverInterview()?"driver":"study"));
  $("#fac-preview-scenario").addEventListener("change",()=>{
   loadScenario($("#fac-preview-scenario").value,state.session.participantId,null,1,{mode:"preview",prepared:false});
   openFacilitator(false);
@@ -235,6 +246,9 @@ function initStudyControls() {
  $("#fac-next").addEventListener("click",()=>loadNextTask());
  window.setInterval(()=>{
   checkStudyDeadline();
-  if (!$("#facilitator").hidden) renderStudyControls();
+  if (!$("#facilitator").hidden) {
+   if (isDriverInterview()) renderDriverClock();
+   else renderStudyControls();
+  }
  },250);
 }

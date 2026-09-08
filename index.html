@@ -15,7 +15,7 @@
     <link rel="preconnect" href="https://unpkg.com" />
     <link rel="preconnect" href="https://tile.openstreetmap.org" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <link rel="stylesheet" href="styles.css?v=16" />
+    <link rel="stylesheet" href="styles.css?v=19" />
   </head>
   <body>
     <div class="phone" id="phone">
@@ -59,11 +59,16 @@
         </header>
 
         <div class="fac-section">
-          <label class="fac-field"><span>Mode</span><select id="fac-mode"><option value="study">Participant study</option><option value="preview">Preview</option><option value="technical">Technical testing</option></select></label>
+          <label class="fac-field"><span>Mode</span><select id="fac-mode"><option value="study">Passenger study</option><option value="driver">Driver interview</option><option value="preview">Preview</option><option value="technical">Technical testing</option></select></label>
           <p class="fac-meta" id="fac-mode-help"></p>
           <div id="fac-setup">
             <label class="fac-field"><span>Participant ID</span><input id="fac-pid" type="text" placeholder="P07" autocomplete="off" /></label>
-            <label class="fac-field"><span>Study group</span><select id="fac-group"><option>A</option><option>B</option><option>C</option><option>D</option></select></label>
+            <label class="fac-field" id="fac-passenger-group"><span>Study group</span><select id="fac-group"><option>A</option><option>B</option><option>C</option><option>D</option></select></label>
+            <div id="fac-driver-setup" hidden>
+              <label class="fac-field"><span>D4 location</span><select id="fac-driver-location"><option value="wendys">Wendy’s</option><option value="qut">QUT Gardens Point</option></select></label>
+              <details class="driver-session-options"><summary>Session details</summary><label class="fac-field"><span>Interview setting</span><select id="fac-driver-context"><option value="parked">Parked / stationary</option><option value="simulator">Simulator</option><option value="static_walkthrough">Static walk-through</option></select></label>
+              <p class="fac-meta">Complete consent and B0 first. Allow about 35 minutes overall; all interaction is stationary.</p></details>
+            </div>
             <button class="button primary fac-wide" id="fac-sequence" type="button">Prepare session</button>
           </div>
           <label class="fac-field" id="fac-preview-picker"><span>Preview scenario</span><select id="fac-preview-scenario"></select></label>
@@ -73,6 +78,7 @@
         <div class="fac-section" id="fac-current-task">
           <h3 id="fac-task-heading">Current scenario</h3>
           <p class="fac-task" id="fac-task"></p>
+          <details id="fac-driver-script-details" hidden><summary>Setup and observation notes</summary><p class="fac-meta" id="fac-driver-setup-notes"></p></details>
           <p class="fac-meta" id="fac-run-status"></p>
           <p class="fac-meta" id="fac-study-guidance"></p>
           <label class="fac-check" id="fac-think-field"><input type="checkbox" id="fac-think-aloud" /> Think-aloud during this task</label>
@@ -96,8 +102,26 @@
           </div>
           <p class="fac-meta" id="fac-sequence-complete" hidden>Sequence complete. Collect the final form and export the session.</p>
         </div>
+        <div class="fac-section" id="fac-driver-controls" hidden>
+          <h3>Passenger response</h3>
+          <p class="fac-meta" id="fac-driver-coordination"></p>
+          <div class="fac-actions">
+            <button class="button primary" id="fac-driver-accept" type="button">Passenger accepts pickup</button>
+            <button class="button secondary" id="fac-driver-reply" type="button">Passenger replies</button>
+          </div>
+          <details id="fac-driver-branches">
+            <summary>Optional response</summary>
+            <label class="fac-field"><span>Response</span><select id="fac-driver-response"><option value="declined">Declines suggestion</option><option value="unable">Cannot reach suggested pickup</option><option value="no_response">No response</option><option value="contact_reply">Custom contact reply</option></select></label>
+            <label class="fac-field"><span>Branch reason / exact reply</span><textarea id="fac-driver-response-note" rows="2" maxlength="500"></textarea></label>
+            <button class="button secondary fac-wide" id="fac-driver-respond" type="button">Apply optional response</button>
+          </details>
+        </div>
         <div class="fac-section" id="fac-observations">
           <h3>Observations</h3>
+          <details id="fac-driver-timing" hidden><summary>Driver’s stated report timing</summary>
+            <label class="fac-field"><span>Stage they would act at</span><select id="fac-driver-stage"><option value="dispatch">At dispatch (request card)</option><option value="safely_stopped">Safely stopped</option><option value="approach">Approaching (simulated)</option><option value="after_collection">After collecting passenger</option><option value="after_trip">After trip</option></select></label>
+            <p class="fac-meta">Set before a simulated report. Record retrospective or verbal timing in the observation notes.</p>
+          </details>
           <label class="fac-field"><span>Observation type</span><select id="fac-observation-type">
             <option value="prompt">Neutral prompt (exact words)</option><option value="assistance">Assistance (exact words)</option>
             <option value="E1">E1: wrong report target</option><option value="E2">E2: missing report category</option><option value="E3">E3: participant identifies unintended confirmation</option>
@@ -105,13 +129,14 @@
             <option value="form">Form given / completed / missing</option><option value="recording">Recording reference</option>
             <option value="task_outcome">Review task outcome</option><option value="context">Intent / suitability / participant context</option>
           </select></label>
-          <label class="fac-field"><span>Reviewed outcome (used with Review task outcome)</span><select id="fac-outcome"><option>independent</option><option>assisted</option><option>incomplete</option><option>abandoned</option></select></label>
+          <label class="fac-field" id="fac-outcome-field"><span>Reviewed outcome (used with Review task outcome)</span><select id="fac-outcome"><option>independent</option><option>assisted</option><option>incomplete</option><option>abandoned</option></select></label>
           <label class="fac-field"><span>Exact observation, check ID or reference</span><textarea id="fac-observation-note" rows="3"></textarea></label>
           <button class="button secondary fac-wide" id="fac-observation-save" type="button">Record observation</button>
         </div>
         <details class="fac-section" id="fac-advanced">
           <summary>Advanced controls</summary>
           <p class="fac-meta">Jump to a scenario or restart it. Restarting preserves earlier attempts.</p>
+          <div id="fac-driver-preview-controls" hidden><button class="button secondary fac-wide" id="fac-driver-mirror" type="button">Preview shared passenger information</button><p class="fac-meta">A read-only view of this interview’s local state.</p></div>
           <label class="fac-field"><span>Scenario</span><select id="fac-scenario"></select></label>
           <div class="fac-grid">
             <label class="fac-field">
@@ -211,9 +236,10 @@
       crossorigin=""
     ></script>
     <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
-    <script src="data.js?v=9"></script>
-    <script src="log.js?v=10"></script>
-    <script src="study.js?v=4"></script>
-    <script src="app.js?v=19"></script>
+    <script src="data.js?v=10"></script>
+    <script src="log.js?v=11"></script>
+    <script src="study.js?v=6"></script>
+    <script src="driver.js?v=5"></script>
+    <script src="app.js?v=22"></script>
   </body>
 </html>

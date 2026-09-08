@@ -61,9 +61,10 @@ function persist() {
 function restore() {
   try {
     const saved = JSON.parse(localStorage.getItem(STATE_KEY));
-    if (!saved || saved.version!==PROTOTYPE_VERSION || !saved.session || !saved.attempt || !Array.isArray(saved.spots)) return false;
+    if (!saved || (saved.version!==PROTOTYPE_VERSION && saved.version!=="passenger-study-2026-09-08-central-entrance") || !saved.session || !saved.attempt || !Array.isArray(saved.spots)) return false;
     state.session = { ...state.session, ...saved.session };
     state.scenario = getScenario(saved.scenarioId);
+    configureDriverScenario(state.scenario, state.session.driverLocation);
     state.session.mode = saved.session.mode || (state.scenario.study ? "study" : "technical");
     state.session.prepared = saved.session.prepared ?? Boolean(state.scenario.study);
     state.attempt = saved.attempt;
@@ -81,6 +82,7 @@ function restore() {
 }
 
 function log(event, payload = {}) {
+  trackDriverEvent(event, payload);
   return EventLog.record(state.session, event, payload);
 }
 
@@ -346,11 +348,14 @@ function carIcon() {
 function renderMap() {
   markerLayer.clearLayers();
   routeLayer.clearLayers();
+  $("#map").classList.toggle("driver-map", state.session.role === "driver");
+  if (state.session.role === "driver") { renderDriverMap(); return; }
   const ui = state.ui;
   const role = state.session.role;
   const selected = selectedSpot();
   const chosen = getSpot(ui.chosenAlternativeId) || getSpot(ui.driverSuggested);
-  const activePickup = chosen || selected;
+  const proposed = isDriverInterview() ? getSpot(driverInterviewState().pendingId) : null;
+  const activePickup = isDriverInterview() ? driverPickupTarget() : chosen || selected;
   const showStatusPins = role === "driver" || ui.screen !== "search";
   const hidePickup = role === "passenger" && ui.screen === "locate";
   /* While browsing suggestions only the original pin and its candidates are drawn.
@@ -363,6 +368,7 @@ function renderMap() {
     if (!validCoords(spot.coordinates)) return;
     const isPickup = !hidePickup && selected && spot.id === selected.id;
     const isChosen = chosen && spot.id === chosen.id;
+    const isProposed = proposed && spot.id === proposed.id;
     if (!showStatusPins && !isPickup) return;
     if (spot.custom && !isPickup) return;
     if (candidateIds && !isPickup && !candidateIds.has(spot.id)) return;
@@ -373,10 +379,10 @@ function renderMap() {
     const etaLabel = role === "passenger" ? "MIN WALK" : "MIN";
     const bare = (Boolean(candidateIds) && !isPickup && !isChosen)
       || (role === "passenger" && isPickup && !isActivePickup);
-    const interactive=role === "driver" || (passengerPickupState().canOpenSuggestions && alternativesFor(selected).some(item=>item.spot.id===spot.id));
+    const interactive=(role === "driver" && !(isDriverInterview() && driverInterviewState().mirror)) || (passengerPickupState().canOpenSuggestions && alternativesFor(selected).some(item=>item.spot.id===spot.id));
     const marker = L.marker(spot.coordinates, {
       interactive,
-      icon: pinIcon(spot, { pickup: isPickup, chosen: isChosen, eta, etaLabel, bare, interactive }),
+      icon: pinIcon(spot, { pickup: isPickup, chosen: isChosen, pending:Boolean(isProposed), eta, etaLabel, bare, interactive }),
       keyboard: false,
       zIndexOffset: isActivePickup ? 1000 : isPickup || isChosen ? 900 : 0,
     });
@@ -410,7 +416,7 @@ function renderMap() {
     }).addTo(routeLayer);
   }
   if (showCar && (chosen || selected)) {
-    const target = chosen || selected;
+    const target = isDriverInterview() ? driverPickupTarget() : chosen || selected;
     if (validCoords(target.coordinates)) {
       L.polyline([DRIVER_POSITION, target.coordinates], { color: "#ffffff", weight: 3, opacity: 0.55 }).addTo(routeLayer);
     }
@@ -497,6 +503,7 @@ function onPinTap(spotId) {
       return;
     }
     state.ui.driverInspectId = spot.id;
+    if (isDriverInterview()) log("driver_spot_inspected", {spot_id:spot.id});
     focusSpot(spot);
     render();
     return;
@@ -974,6 +981,7 @@ function driverAddTemplate() {
 }
 
 function driverPickupTarget() {
+ if (isDriverInterview()) return getSpot(driverInterviewState().activeId);
  return state.scenario.driverScreen === "accepted-alternative"
   ? getSpot(state.ui.chosenAlternativeId) || getSpot(state.scenario.alternativeSpot)
   : selectedSpot() || getSpot(state.scenario.presetSpot);
@@ -985,6 +993,7 @@ function canDriverSuggest() {
 }
 
 function driverTemplate() {
+  if (isDriverInterview()) return driverInterviewTemplate();
   const ui = state.ui;
   const scenario = state.scenario;
   if (ui.driverAddMode) return driverAddTemplate();
@@ -1089,6 +1098,7 @@ function renderSearch() {
 /* The top-left back button steps out of the current layer: an open override prompt or
    suggestion list closes first, then the screen returns to the one before it. */
 function canGoBack() {
+  if (isDriverInterview() && driverInterviewState()?.mirror) return false;
   if (state.scenario.study && (state.attempt.status !== "running" || state.attempt.pausedAt)) return false;
   if (state.scenario.p4 && !state.ui.overridePending) return false;
   const ui = state.ui;
@@ -1108,8 +1118,10 @@ function goBack() {
     } else {
       ui.driverSuggestOpen = false;
     }
+    ui.driverInspectId = null;
     render();
     setSheet("half");
+    focusDriverMap();
     return;
   }
   if (ui.screen === "confirmed") {
@@ -1231,6 +1243,9 @@ let reportContext = null;
 function openReport(context) {
   if (!studyCanInteract()) return;
   if (context.actor==="passenger" && !passengerPickupState().canReport) return;
+  if (context.actor==="driver" && !context.pending && !validCoords(getSpot(context.spotId)?.coordinates)) {
+    showToast("Location unavailable", "Select a valid pickup point before reporting."); return;
+  }
   reportContext = {...context, submissionId:crypto.randomUUID()};
   $("#report-error").textContent="";
   const dialog = $("#report-dialog");
@@ -1384,15 +1399,20 @@ function facilitatorSelectedScenario() {
 
 function loadScenario(scenarioId, participantId, variant, orderPosition, options = {}) {
   const scenario = getScenario(scenarioId);
+  configureDriverScenario(scenario, options.driverLocation || state.session.driverLocation);
   if (state.scenario.study && state.attempt.status==="running") finishTask(options.reset?"reset_interrupted":"scenario_switched");
   closeReport(false);
+  options = {driverLocation:state.session.driverLocation, driverContext:state.session.driverContext, ...options};
   const sameParticipant=state.session.participantId===(participantId || state.session.participantId);
   state.scenario=scenario;
   if (!scenario.study && variant && scenario.role==="passenger") scenario.variant=variant;
   state.attempt=newAttempt();
-  const mode=options.mode || state.session.mode || "study";
-  const prepared=options.prepared ?? (mode === "study" && Boolean(scenario.study));
+  const mode=scenario.driverInterview ? "driver" : options.mode || (state.session.mode === "driver" ? "study" : state.session.mode) || "study";
+  const prepared=options.prepared ?? (["study", "driver"].includes(mode) && Boolean(scenario.study));
   state.session={participantId:participantId||state.session.participantId||"P00",role:scenario.role,scenarioId:scenario.id,variant:scenario.role==="passenger"?scenario.variant:"n/a",orderPosition:Number(orderPosition)||1,useGps:scenario.study?false:state.session.useGps,mode,prepared,id:sameParticipant && !options.newSession && mode === state.session.mode?state.session.id:crypto.randomUUID(),attemptId:state.attempt.id,attemptKind:options.reset?"retry":"initial",group:STUDY_GROUPS[options.group]?options.group:state.session.group||"A",location:scenario.location||scenario.presetSpot,device:navigator.userAgent,thinkAloud:false};
+  state.session.driverLocation = options.driverLocation || state.session.driverLocation || "wendys";
+  state.session.driverContext = options.driverContext || state.session.driverContext || "parked";
+  if (scenario.driverInterview) { state.session.group = null; state.session.variant = "n/a"; }
   if (mode === "preview") state.attempt.status="running";
   $("#fac-end-options").hidden=true;
   lastViewSignature="";
@@ -1403,6 +1423,13 @@ function loadScenario(scenarioId, participantId, variant, orderPosition, options
   $("#fac-group").value=state.session.group;
   $("#fac-preview-scenario").value=scenario.id;
   $("#fac-think-aloud").checked=false;
+  $("#fac-driver-location").value=state.session.driverLocation;
+  $("#fac-driver-context").value=state.session.driverContext;
+  $("#fac-driver-response").value="declined";
+  $("#fac-driver-branches").open=false;
+  $("#fac-driver-script-details").open=false;
+  $("#fac-driver-timing").open=false;
+  $("#fac-driver-response-note").value="";
   $("#toast-region").innerHTML="";
   resetSpotsForScenario();
   log("scenario_loaded", {
@@ -1418,6 +1445,8 @@ function loadScenario(scenarioId, participantId, variant, orderPosition, options
     allocation_match: !scenario.p4 || STUDY_GROUPS[state.session.group]?.[state.session.orderPosition-1]===scenario.id,
     local_alternatives:alternativesFor(getSpot(scenario.presetSpot)).map(a=>({spot:spotSnapshot(a.spot),walk_minutes:a.walk})),
     gps_enabled:state.session.useGps,
+    driver_location:scenario.driverInterview ? state.session.driverLocation : null,
+    interview_context:scenario.driverInterview ? state.session.driverContext : null,
   });
   if (scenario.role === "passenger" && scenario.entry === "preset") {
     placePin(scenario.presetSpot, getSpot(scenario.presetSpot).name, "preset");
@@ -1426,7 +1455,7 @@ function loadScenario(scenarioId, participantId, variant, orderPosition, options
     render();
     if (scenario.role === "driver") {
       setSheet("half");
-      focusPair({ coordinates: DRIVER_POSITION }, selectedSpot());
+      focusDriverMap();
     } else {
       mapFocus = null;
       map.setView(scenario.study?getSpot(scenario.presetSpot).coordinates:CBD_CENTER, 17);
@@ -1457,7 +1486,7 @@ function switchView(role) {
   render();
   setSheet("half");
   const selected = selectedSpot();
-  if (role === "driver") focusPair({ coordinates: DRIVER_POSITION }, selected);
+  if (role === "driver") focusDriverMap();
   else if (selected) focusPickup();
 }
 
@@ -1476,6 +1505,7 @@ function resetSpotsForScenario() {
     state.ui.selectedSpotId = scenario.entry === "preset" ? scenario.presetSpot : null;
     state.ui.suggestionsOpen = Boolean(scenario.suggestionsExpanded);
   }
+  resetDriverInterview();
 }
 
 function renderFacilitator() {
@@ -1491,7 +1521,7 @@ function renderFacilitator() {
     $("#fac-order").value = String(state.session.orderPosition || 1);
     $("#fac-pid").value = state.session.participantId;
     $("#fac-group").value=state.session.group;
-    $("#fac-preview-scenario").innerHTML=Object.keys(SCENARIOS).filter(id=>SCENARIOS[id].study).map(id=>`<option value="${id}">${id} · ${escapeHtml(SCENARIOS[id].label)}</option>`).join("");
+    $("#fac-preview-scenario").innerHTML=Object.keys(SCENARIOS).filter(id=>SCENARIOS[id].study && !SCENARIOS[id].driverInterview).map(id=>`<option value="${id}">${id} · ${escapeHtml(SCENARIOS[id].label)}</option>`).join("");
     $("#fac-preview-scenario").value=state.scenario.id;
     $("#fac-gps").checked = state.session.useGps !== false;
     $("#fac-break").innerHTML = BREAK_CONDITIONS.map((condition) => `<option value="${condition}">${condition}</option>`).join("");
@@ -1510,6 +1540,7 @@ function renderFacilitator() {
   $("#fac-break-apply").disabled=Boolean(state.scenario.study);
   $("#fac-session-summary").textContent =
     isPreview() ? `Preview · ${state.scenario.id}` : sessionPrepared() ? `${state.session.participantId} · Group ${state.session.group} · ${state.scenario.id}` : "Session setup";
+  renderDriverControls();
   $("#fac-switch").textContent = state.session.role === "driver" ? "Show passenger view (keep spots)" : "Show driver view (keep spots)";
 
   $("#fac-spots").innerHTML = state.spots
@@ -1588,7 +1619,7 @@ function initFacilitator() {
     const scenario=facilitatorSelectedScenario();
     const group=state.session.group || $("#fac-group").value;
     const order=scenario.p4 ? Math.max(1,STUDY_GROUPS[group].indexOf(scenario.id)+1) : 1;
-    loadScenario(scenario.id, state.session.participantId, $("#fac-variant").value, order,{group,mode:scenario.study ? (isPreview()?"preview":"study") : "technical"});
+    loadScenario(scenario.id, state.session.participantId, $("#fac-variant").value, order,{group,mode:scenario.driverInterview ? "driver" : scenario.study ? (isPreview()?"preview":"study") : "technical"});
     openFacilitator(false);
     openFacilitator(true);
   });
@@ -1740,6 +1771,8 @@ function bindSheetHandlers() {
     render();
   });
 
+  bindDriverInterviewHandlers(on);
+
   on("#driver-confirm", () => {
     if (state.ui.driverConfirmed || !validCoords(driverPickupTarget()?.coordinates)) return;
     state.ui.driverConfirmed = true;
@@ -1747,7 +1780,7 @@ function bindSheetHandlers() {
     render();
     showToast("Plan confirmed", `${PASSENGER_NAME} will be told before you arrive.`);
   });
-  on("#driver-report", () => openReport({ mode: "report", actor: "driver", spotId: state.ui.driverInspectId || state.ui.selectedSpotId }));
+  on("#driver-report", () => openReport({ mode: "report", actor: "driver", spotId: driverPickupTarget()?.id }));
   on("#driver-add", () => {
     state.ui.driverAddMode = true;
     state.ui.driverSearch = "";
@@ -1876,6 +1909,14 @@ function toggleSuggestions(forceOpen) {
 
 function logRenderEvents() {
  if (studyNotice()) return;
+ if (isDriverInterview()) {
+  const snapshot=driverPassengerSnapshot();
+  const signature=JSON.stringify([state.session.attemptId,snapshot,driverInterviewState().mirror,state.ui.driverInspectId,state.ui.driverSuggestOpen]);
+  if (signature===lastViewSignature) return;
+  lastViewSignature=signature;
+  log("view_rendered",{screen:driverInterviewState().mirror?"simulated_passenger":"driver",...snapshot});
+  return;
+ }
  const focal=state.ui.screen==="confirmed"?(getSpot(state.ui.chosenAlternativeId)||selectedSpot()):selectedSpot();
  if (!focal || state.ui.screen==="locate") return;
  const displayed=displayedSnapshot(focal);
@@ -1911,7 +1952,7 @@ function applyUrlParams() {
       params.get("pid") || params.get("participant") || state.session.participantId,
       params.get("variant") || getScenario(scenarioId.toUpperCase()).variant,
       params.get("order") || 1,
-      {group:params.get("group") || "A"},
+      {group:params.get("group") || "A",driverLocation:params.get("driverLocation") || "wendys"},
     );
     window.history.replaceState({}, "", window.location.pathname + (facilitator ? "?facilitator=1" : ""));
     return true;
@@ -1932,6 +1973,7 @@ function boot() {
   initSheetDrag();
   initFacilitator();
   initStudyControls();
+  initDriverControls();
 
   $("#back-button").addEventListener("click", goBack);
   $("#report-form").addEventListener("submit", handleReportSubmit);
@@ -1966,7 +2008,7 @@ function boot() {
     }
     render();
     const selected = selectedSpot();
-    if (state.session.role === "driver") focusPair({ coordinates: DRIVER_POSITION }, selected);
+    if (state.session.role === "driver") focusDriverMap();
     else if (selected) focusPickup();
     else if (state.ui.mapCenter) map.setView([state.ui.mapCenter[0], state.ui.mapCenter[1]], state.ui.mapCenter[2] || 16, { animate: false });
     else map.setView(CBD_CENTER, 16);

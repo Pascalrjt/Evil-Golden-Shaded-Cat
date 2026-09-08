@@ -1,7 +1,7 @@
 /* All pickup conditions and walk times are simulated study fixtures.
    Candidate kerb coordinates: BCC passenger-loading sign records, checked 8 Sep 2026.
    Sign locations are indicative; this prototype does not provide live stopping advice. */
-const PROTOTYPE_VERSION = "passenger-study-2026-09-08-central-entrance";
+const PROTOTYPE_VERSION = "pickup-studies-2026-09-09-driver-dispatch";
 const CBD_CENTER = [-27.4698, 153.0251];
 const DEFAULT_GPS_POSITION = [-27.469807, 153.025242];
 const CBD_BOUNDS = [[-27.479,153.013],[-27.461,153.036]];
@@ -101,6 +101,25 @@ const STUDY_GROUPS = {
  A:["P4-WENDYS-EXP","P4-QUT-NOEXP"], B:["P4-WENDYS-NOEXP","P4-QUT-EXP"],
  C:["P4-QUT-EXP","P4-WENDYS-NOEXP"], D:["P4-QUT-NOEXP","P4-WENDYS-EXP"]
 };
+const DRIVER_SEQUENCE = ["D1", "D2", "D3", "D4"];
+const DRIVER_TASKS = [
+ ["D1", "Verified unsuitable pickup", "queen-street", 5,
+  "A pickup request has come in near Queen Street Mall. The passenger's pickup point is marked Pickup not recommended, based on recent reports from other drivers. Review the request, decide whether you would accept it, then decide how you would approach the pickup. Use the prototype as you would while safely stopped.",
+  "The request card shows the verified restriction at Hungry Jack’s near Albert Street: 4 drivers, 12 minutes ago. Observe the dispatch decision, the first action after acceptance, evidence used and coordination needed."],
+ ["D2", "Uncertain or stale information", "maru", 5,
+  "A pickup request has come in near Maru on Elizabeth Street. Pickup Pilot shows that the location may be difficult, based on one driver report from three days ago that has not been verified by others. Review the request and decide what you would do.",
+  "The request card shows Maru’s Elizabeth Street frontage: construction caution, one driver report, 3 days ago, awaiting verification. Observe the dispatch decision, reliance on evidence and the planned approach."],
+ ["D3", "New obstruction and reporting", "ann-street", 7,
+  "A pickup request has come in for the Ann Street pickup at Central Station. Pickup Pilot currently marks it Suitable for pickup. Review the request and the pickup information.",
+  "The request card begins suitable, verified by 4 drivers, 12 minutes ago. After acceptance and inspection, reveal the barriers. Read: As you approach, you find temporary barriers across the pickup kerb and cannot stop there safely. While parked or in this simulation, use Pickup Pilot as you normally would to respond and continue the pickup. Observe safe stopping, reporting timing and coordination in the driver’s chosen order."],
+ ["D4", "Passenger relocation", "wendys", 5,
+  "A pickup request has come in. The passenger's original pickup location is difficult to access. Pickup Pilot suggested that the passenger move to a nearby pickup point that is easier for you to reach, and the passenger has accepted the relocation. Review the request and the updated pickup, then continue as you would during a real pickup.",
+  "The request card shows the accepted local alternative at the assigned Wendy’s or QUT location, with the original pickup’s reason. Observe location clarity, contact needed and the balance of passenger walking effort and driver access."]
+];
+for (const [id, label, presetSpot, guideMinutes, task, setup] of DRIVER_TASKS) {
+ SCENARIOS[id] = {role:"driver", driverInterview:true, study:true, entry:"preset", limitSeconds:null,
+  label, presetSpot, guideMinutes, task, setup, location:SPOT_FIXTURE.find(s=>s.id===presetSpot).name};
+}
 const SCENARIO_ALIASES = {"R1-A":"P0","R1-B":"P1","R1-C":"P3","R4-EXP":"P4-WENDYS-EXP","R4-NOEXP":"P4-WENDYS-NOEXP"};
 function getScenario(id) {
  id=SCENARIO_ALIASES[id] || id;
