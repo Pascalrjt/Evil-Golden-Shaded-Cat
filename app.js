@@ -902,10 +902,9 @@ function passengerPickupTemplate(spot) {
   <span class="option-main"><strong>${escapeHtml(alt.name)}</strong><span class="option-address">${escapeHtml(alt.address)}</span><span class="option-tags">${statusTag(alt)}</span>
   <span class="alternative-support">${supportingVisible()?escapeHtml(alt.reason):""}${supportingVisible()&&!scenario.p4?`<span class="alternative-evidence">${escapeHtml(freshnessText(alt))}<br>Source: ${escapeHtml(sourceText(alt))}</span>`:""}</span></span><span class="option-meta"><strong>${walk ?? "?"} min walk</strong></span></button>`).join("");
  const primary=view.canConfirmAlternative?`<button class="button primary" id="confirm-alternative" type="button">Confirm ${escapeHtml(view.chosen.name)}</button>`:view.canConfirmOriginal?'<button class="button primary" id="confirm-pin" type="button">Confirm pickup here</button>':"";
- const keep=view.canKeep?`<button class="button ${view.canSuggest?"text":"primary"}" id="keep-pin" type="button">${spot.status==="unknown"?"Use this pickup anyway":"Keep my pin anyway"}</button>`:"";
- const prompt=!primary && view.canSuggest?'<p class="muted">Choose a suggested pickup or keep your pin.</p>':!view.suitable && !view.canSuggest?'<p class="muted">No suggested alternatives are available. You can choose another location on the map or keep this pin.</p>':"";
+ const keep=view.canKeep?`<button class="button ${primary || view.canOpenSuggestions?"secondary":"primary"}" id="keep-pin" type="button">${spot.status==="unknown"?"Use this pickup anyway":"Keep my pin anyway"}</button>`:"";
+ const note=!view.suitable && !view.canSuggest?'<p class="muted">No suggested alternatives are available. You can choose another location on the map or keep this pin.</p>':"";
  const report=view.canReport?`<button class="button ghost" id="open-report" type="button">${view.canSuggest || scenario.p4?"Report a problem at the original pickup":"Report a problem here"}</button>`:"";
- const actions=`${primary}${prompt}${keep}`;
  if (view.browsing) {
   const detailOpen=Boolean(ui.statusDetailOpen);
   const summary=`<button class="browse-summary" id="toggle-status-detail" type="button" aria-expanded="${detailOpen}"><span class="swatch ${spot.status}"></span><span class="browse-summary-text"><strong>${STATUS_LABEL[spot.status]}</strong><small>${escapeHtml(spot.address)}</small></span><i data-lucide="${detailOpen?"chevron-up":"chevron-down"}"></i></button>`;
@@ -919,7 +918,9 @@ function passengerPickupTemplate(spot) {
   const footer=browsePrimary||report?`<div class="browse-actions">${browsePrimary}${report}</div>`:"";
   return `<div class="browse-head">${browseHead}${toggle}</div><div class="browse-list"><div class="option-list">${cards}${originalCard}</div></div>${footer}`;
  }
- return `${head}${view.canOpenSuggestions?'<button class="button secondary" id="open-suggestions" type="button">See suggested pickup spots</button>':""}<div class="actions">${actions}${report}</div>`;
+ const suggest=view.canOpenSuggestions?'<button class="button primary" id="open-suggestions" type="button">See suggested pickup spots</button>':"";
+ const footer=`${primary}${suggest}${keep}${report}`;
+ return `<div class="sheet-scroll">${head}${note}</div>${footer?`<div class="browse-actions">${footer}</div>`:""}`;
 }
 function passengerConfirmedTemplate(spot) {
  const chosen=getSpot(state.ui.chosenAlternativeId)||spot;
@@ -1686,7 +1687,7 @@ function render() {
     body.innerHTML = passengerPickupTemplate(selectedSpot());
   }
   const list = body.querySelector(".browse-list");
-  body.classList.toggle("browsing", Boolean(list));
+  body.classList.toggle("browsing", Boolean(body.querySelector(".browse-actions")));
   if (list) list.scrollTop = listScroll;
   bindBrowseListScroll(list);
   $("#phone").classList.toggle("p4-study",Boolean(state.scenario.p4));
