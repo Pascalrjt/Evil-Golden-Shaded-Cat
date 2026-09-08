@@ -1927,3 +1927,44 @@ h2 {
     animation: none !important;
   }
 }
+
+/* Study layouts preserve EXP / NOEXP geometry while removing withheld text from the DOM. */
+.fac-field textarea { width:100%; padding:10px; color:var(--text); background:var(--card); border:1px solid var(--line); border-radius:8px; font:inherit; resize:vertical; }
+.report-error { color:var(--amber); margin:8px 0; }
+.report-error:empty { display:none; }
+.option-address { display:block; font-size:12px; color:var(--muted); }
+.alternative-support { display:block; font-size:12px; line-height:1.4; margin-top:5px; }
+.p4-study .matched-status .supporting-slot { min-height:96px; }
+.p4-study .alternative-support { min-height:34px; }
+.p4-study .override-support { min-height:44px; margin:8px 0; }
+.p4-study .sheet-header { min-height:82px; margin-bottom:8px; }
+.p4-study .sheet-header h1 { font-size:19px; line-height:1.25; }
+.p4-study .status-card { margin-bottom:8px; padding:10px; }
+.p4-study .status-reason { font-size:13px; }
+.p4-study .status-meta, .p4-study .status-source { font-size:12px; }
+.p4-study .option-card { min-height:135px; }
+.evidence-history { margin-top:8px; font-size:12px; }
+.evidence-history p { margin-top:6px; }
+.browse-head .sheet-header h1 { font-size:19px; }
+.browse-head .section-toggle { padding:8px 0; }
+.fac-meta, .fac-task { overflow-wrap:anywhere; }
+
+.p4-study .map { height:calc(100% - var(--sheet-height) + 24px); bottom:auto; }
+
+.alternative-evidence { display:block; color:var(--muted); margin-top:6px; }
+.browse-head { max-height:65%; overflow-y:auto; }
+.browse-list { min-height:80px; }
+
+/* Facilitator workflow: show only actions for the current stage. */
+.facilitator [hidden] { display:none !important; }
+.facilitator details > summary { cursor:pointer; font-weight:650; padding:8px 0; }
+.facilitator details[open] > summary { margin-bottom:14px; }
+.fac-end { margin-top:14px; padding:14px; border:1px solid #555; border-radius:12px; }
+.fac-wide { width:100%; }
+
+.fac-actions > .fac-wide { grid-column:1 / -1; }
+
+.override-box.caution { border-color:var(--amber); background:var(--amber-bg); }
+.override-box.caution > svg { color:var(--amber); }
+.override-box.unknown { border-color:var(--line); background:var(--card); }
+.override-box.unknown > svg { color:var(--muted); }

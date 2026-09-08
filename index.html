@@ -15,7 +15,7 @@
     <link rel="preconnect" href="https://unpkg.com" />
     <link rel="preconnect" href="https://tile.openstreetmap.org" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <link rel="stylesheet" href="styles.css?v=13" />
+    <link rel="stylesheet" href="styles.css?v=16" />
   </head>
   <body>
     <div class="phone" id="phone">
@@ -33,7 +33,7 @@
         <button class="app-badge" id="app-badge" type="button" aria-label="Pickup Pilot">Pickup Pilot</button>
       </div>
 
-      <button class="round-button map-locate-button" id="locate-me" type="button" aria-label="Use my location" hidden>
+      <button class="round-button map-locate-button" id="locate-me" type="button" aria-label="Recenter map on my location" hidden>
         <i data-lucide="locate-fixed"></i>
       </button>
 
@@ -59,16 +59,60 @@
         </header>
 
         <div class="fac-section">
-          <h3>Session</h3>
-          <label class="fac-field">
-            <span>Participant ID</span>
-            <input id="fac-pid" type="text" placeholder="P07 or D03" autocomplete="off" />
-          </label>
-          <label class="fac-field">
-            <span>Scenario</span>
-            <select id="fac-scenario"></select>
-          </label>
+          <label class="fac-field"><span>Mode</span><select id="fac-mode"><option value="study">Participant study</option><option value="preview">Preview</option><option value="technical">Technical testing</option></select></label>
+          <p class="fac-meta" id="fac-mode-help"></p>
+          <div id="fac-setup">
+            <label class="fac-field"><span>Participant ID</span><input id="fac-pid" type="text" placeholder="P07" autocomplete="off" /></label>
+            <label class="fac-field"><span>Study group</span><select id="fac-group"><option>A</option><option>B</option><option>C</option><option>D</option></select></label>
+            <button class="button primary fac-wide" id="fac-sequence" type="button">Prepare session</button>
+          </div>
+          <label class="fac-field" id="fac-preview-picker"><span>Preview scenario</span><select id="fac-preview-scenario"></select></label>
+          <p class="fac-meta" id="fac-session-summary"></p>
+          <p class="fac-meta" id="fac-allocation"></p>
+        </div>
+        <div class="fac-section" id="fac-current-task">
+          <h3 id="fac-task-heading">Current scenario</h3>
           <p class="fac-task" id="fac-task"></p>
+          <p class="fac-meta" id="fac-run-status"></p>
+          <p class="fac-meta" id="fac-study-guidance"></p>
+          <label class="fac-check" id="fac-think-field"><input type="checkbox" id="fac-think-aloud" /> Think-aloud during this task</label>
+          <div class="fac-actions">
+            <button class="button primary" id="fac-start-task" type="button">Start task</button>
+            <button class="button primary fac-wide" id="fac-next" type="button">Next scenario</button>
+            <button class="button secondary" id="fac-stop-task" type="button">End task</button>
+            <button class="button secondary" id="fac-skip-task" type="button">Skip scenario</button>
+            <button class="button secondary" id="fac-reveal" type="button">Reveal obstruction</button>
+            <button class="button primary" id="fac-reveal-end" type="button">Resume after reveal</button>
+          </div>
+          <div class="fac-end" id="fac-end-options" hidden>
+            <label class="fac-field"><span>Reason for ending</span><select id="fac-end-reason"><option value="">Select a reason</option><option value="facilitator_stop">Facilitator ended the task</option><option value="abandoned">Participant chose to stop</option></select></label>
+            <div class="fac-actions"><button class="button danger" id="fac-end-confirm" type="button">Confirm end</button><button class="button secondary" id="fac-end-cancel" type="button">Continue task</button></div>
+          </div>
+          <p class="fac-meta" id="fac-result"></p>
+          <div class="fac-end" id="fac-skip-options" hidden>
+            <label class="fac-field"><span>Reason for skipping</span><textarea id="fac-skip-reason" rows="2" maxlength="500" placeholder="For example, session running short"></textarea></label>
+            <p class="fac-meta">Records the skip and advances to the next assigned scenario. Existing activity is retained. Opening this form does not pause the task timer.</p>
+            <div class="fac-actions"><button class="button secondary" id="fac-skip-confirm" type="button">Confirm skip</button><button class="button secondary" id="fac-skip-cancel" type="button">Cancel</button></div>
+          </div>
+          <p class="fac-meta" id="fac-sequence-complete" hidden>Sequence complete. Collect the final form and export the session.</p>
+        </div>
+        <div class="fac-section" id="fac-observations">
+          <h3>Observations</h3>
+          <label class="fac-field"><span>Observation type</span><select id="fac-observation-type">
+            <option value="prompt">Neutral prompt (exact words)</option><option value="assistance">Assistance (exact words)</option>
+            <option value="E1">E1: wrong report target</option><option value="E2">E2: missing report category</option><option value="E3">E3: participant identifies unintended confirmation</option>
+            <option value="comprehension">Comprehension: C / P / I / NR and check ID</option><option value="technical_fault">Technical fault / interruption</option>
+            <option value="form">Form given / completed / missing</option><option value="recording">Recording reference</option>
+            <option value="task_outcome">Review task outcome</option><option value="context">Intent / suitability / participant context</option>
+          </select></label>
+          <label class="fac-field"><span>Reviewed outcome (used with Review task outcome)</span><select id="fac-outcome"><option>independent</option><option>assisted</option><option>incomplete</option><option>abandoned</option></select></label>
+          <label class="fac-field"><span>Exact observation, check ID or reference</span><textarea id="fac-observation-note" rows="3"></textarea></label>
+          <button class="button secondary fac-wide" id="fac-observation-save" type="button">Record observation</button>
+        </div>
+        <details class="fac-section" id="fac-advanced">
+          <summary>Advanced controls</summary>
+          <p class="fac-meta">Jump to a scenario or restart it. Restarting preserves earlier attempts.</p>
+          <label class="fac-field"><span>Scenario</span><select id="fac-scenario"></select></label>
           <div class="fac-grid">
             <label class="fac-field">
               <span>Variant</span>
@@ -86,36 +130,35 @@
             </label>
           </div>
           <label class="fac-check">
-            <input id="fac-gps" type="checkbox" checked />
+            <input id="fac-gps" type="checkbox" />
             <span>Use device GPS for the start position (passenger, inside the study area only). Coordinates are never logged.</span>
           </label>
-          <div class="fac-actions">
-            <button class="button primary" id="fac-load" type="button">Load scenario</button>
-            <button class="button secondary" id="fac-reset" type="button">Reset spots</button>
-          </div>
-          <p class="fac-meta" id="fac-session-summary"></p>
-          <button class="button secondary fac-wide" id="fac-switch" type="button">Show driver view (keep spots)</button>
-          <p class="fac-meta">Switching the view keeps the spot states so both views can be compared. Loading a scenario resets them.</p>
-        </div>
-
+          <div class="fac-actions"><button class="button secondary" id="fac-load" type="button">Load selected scenario</button><button class="button secondary" id="fac-reset" type="button">Restart scenario</button></div>
+          <button class="button secondary fac-wide" id="fac-new-session" type="button">Set up another participant</button>
+          <div id="fac-technical-controls">
+            <button class="button secondary fac-wide" id="fac-switch" type="button">Show driver view</button>
         <div class="fac-section">
-          <h3>Spot states</h3>
+          <h3>Spot states (technical mode)</h3>
           <div class="fac-spots" id="fac-spots"></div>
         </div>
 
         <div class="fac-section">
-          <h3>Break condition</h3>
+          <h3>Technical fault controls</h3>
           <div class="fac-inline">
             <select id="fac-break"></select>
             <button class="button secondary" id="fac-break-apply" type="button">Apply</button>
           </div>
-          <p class="fac-meta">Marks the log. "reload" reloads the page. "bad_location_data" removes the pin's coordinates.</p>
+          <p class="fac-meta">Use technical scenarios for fault testing. Fault controls are disabled during participant tasks.</p>
         </div>
 
-        <div class="fac-section">
-          <h3>Event log</h3>
+          </div>
+        </details>
+
+        <details class="fac-section" id="fac-exports">
+          <summary>Exports and event log</summary>
           <p class="fac-meta" id="fac-log-count"></p>
           <div class="fac-actions">
+            <button class="button secondary" id="fac-export-summary" type="button">Export task summaries</button>
             <button class="button secondary" id="fac-export-json" type="button">Export JSON</button>
             <button class="button secondary" id="fac-export-csv" type="button">Export CSV</button>
             <button class="button secondary" id="fac-share" type="button">Share</button>
@@ -123,7 +166,7 @@
           </div>
           <ol class="fac-log" id="fac-log-tail"></ol>
           <p class="fac-meta">Export at the end of every session, save to the team OneDrive, then clear.</p>
-        </div>
+        </details>
 
         <p class="fac-hint">Open with Ctrl+Shift+F, the URL parameter ?facilitator=1, or three quick taps on the app name.</p>
       </section>
@@ -146,6 +189,7 @@
             <span>Name this spot</span>
             <input id="report-name" type="text" maxlength="40" placeholder="For example, Charlotte St taxi rank" autocomplete="off" />
           </label>
+          <p id="report-error" class="report-error" role="alert"></p>
           <div class="report-options" id="report-options" role="radiogroup" aria-label="Reason"></div>
           <label class="field">
             <span>Short note <small>Optional</small></span>
@@ -167,8 +211,9 @@
       crossorigin=""
     ></script>
     <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
-    <script src="data.js?v=8"></script>
-    <script src="log.js?v=7"></script>
-    <script src="app.js?v=14"></script>
+    <script src="data.js?v=9"></script>
+    <script src="log.js?v=10"></script>
+    <script src="study.js?v=4"></script>
+    <script src="app.js?v=19"></script>
   </body>
 </html>

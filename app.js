@@ -3,13 +3,14 @@
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-const STATE_KEY = "pp:state";
+const STATE_KEY = "pp:state:study-v2";
 
 /* ---------- State ---------- */
 
 const state = {
-  session: { participantId: "P00", role: "passenger", scenarioId: "FREE", variant: "explained", orderPosition: 1, useGps: true },
+  session: { participantId: "P00", role: "passenger", scenarioId: "FREE", variant: "explained", orderPosition: 1, useGps: false, mode:"study", prepared:false, id:crypto.randomUUID(), group:"A", device:navigator.userAgent },
   scenario: getScenario("FREE"),
+  attempt: newAttempt(),
   spots: cloneFixture(),
   ui: defaultUi(),
 };
@@ -25,9 +26,7 @@ function defaultUi() {
     searchLabel: "",
     chosenAlternativeId: null,
     overridePending: false,
-    stepFreeOnly: false,
     suggestionsOpen: false,
-    countdownStartedAt: null,
     statusLoggedFor: null,
     relocationLoggedFor: null,
     badLocationLogged: false,
@@ -43,14 +42,14 @@ function defaultUi() {
 }
 
 function cloneFixture() {
-  return SPOT_FIXTURE.map((spot) => ({ ...spot, reports: [], addedBy: null, lastReporter: null }));
+  return SPOT_FIXTURE.map((spot) => ({ ...structuredClone(spot), reports: [], history: [], addedBy: null, lastReporter: null }));
 }
 
 function persist() {
   try {
     localStorage.setItem(
       STATE_KEY,
-      JSON.stringify({ session: state.session, scenarioId: state.scenario.id, spots: state.spots, ui: state.ui }),
+      JSON.stringify({ session: state.session, scenarioId: state.scenario.id, spots: state.spots, ui: state.ui, attempt:state.attempt, version:PROTOTYPE_VERSION }),
     );
   } catch (error) {
     /* Storage unavailable. The session still runs in memory. */
@@ -60,10 +59,14 @@ function persist() {
 function restore() {
   try {
     const saved = JSON.parse(localStorage.getItem(STATE_KEY));
-    if (!saved || !saved.session || !Array.isArray(saved.spots)) return false;
+    if (!saved || saved.version!==PROTOTYPE_VERSION || !saved.session || !saved.attempt || !Array.isArray(saved.spots)) return false;
     state.session = { ...state.session, ...saved.session };
     state.scenario = getScenario(saved.scenarioId);
+    state.session.mode = saved.session.mode || (state.scenario.study ? "study" : "technical");
+    state.session.prepared = saved.session.prepared ?? Boolean(state.scenario.study);
+    state.attempt = saved.attempt;
     state.spots = saved.spots;
+    if (state.scenario.study) state.session.useGps=false;
     state.ui = { ...defaultUi(), ...saved.ui };
     if (state.ui.screen === "search") {
       state.ui.screen = "locate";
@@ -115,6 +118,7 @@ function selectedSpot() {
    (device GPS, or the simulated Queen Street position outside the study area). Without a
    position, and always on the driver side, they start from the selected pin. */
 function walkOrigin() {
+  if (state.scenario.study) return getSpot(state.scenario.presetSpot);
   const position = state.ui.userPosition;
   if (state.session.role === "passenger" && position && validCoords([position[0], position[1]])) {
     return { id: "you", name: "where you are", coordinates: [position[0], position[1]], device: true };
@@ -136,19 +140,16 @@ function walkFor(spot, origin = walkOrigin()) {
 }
 
 function alternativesFor(spot) {
-  return state.spots
-    .filter((candidate) => candidate.id !== spot.id && !candidate.custom && ["suitable", "caution"].includes(candidate.status) && validCoords(candidate.coordinates))
-    .filter((candidate) => !state.ui.stepFreeOnly || candidate.stepFree)
-    .map((candidate) => ({ spot: candidate, walk: walkFor(candidate, state.session.role === "passenger" ? walkOrigin() : spot) }))
-    .sort((a, b) => {
-      const rank = (item) => (item.spot.status === "suitable" ? 0 : 1);
-      return rank(a) - rank(b) || (a.walk ?? 99) - (b.walk ?? 99);
-    });
+  if (!spot) return [];
+  const ids=state.scenario.alternativeIds || LOCAL_ALTERNATIVES[spot.area] || [];
+  return ids.map(getSpot).filter(candidate=>candidate && candidate.id!==spot.id && validCoords(candidate.coordinates))
+    .map(candidate=>({spot:candidate,walk:walkFor(candidate,state.session.role==="passenger"?walkOrigin():spot)}));
 }
 
 function nearestSpot(coords) {
   let best = null;
   state.spots.forEach((spot) => {
+    if (state.scenario.study && spot.area!==getSpot(state.scenario.presetSpot).area) return;
     if (!validCoords(spot.coordinates) || spot.custom) return;
     const distance = distanceMetres(coords, spot.coordinates);
     if (!best || distance < best.distance) best = { spot, distance };
@@ -247,6 +248,10 @@ function transition(spotId, trigger, triggeredBy, extra = {}) {
 
   if (trigger === "report") {
     const report = extra.report;
+    spot.history ||= [];
+    spot.history.push(spotSnapshot(spot));
+    // History entries retain prior evidence without recursively nesting older history.
+    delete spot.history[spot.history.length-1].history;
     spot.reports.push(report);
     spot.status = reasonStatus(report.reason);
     spot.reason = reasonSentence(report.reason, report.note);
@@ -268,7 +273,7 @@ function transition(spotId, trigger, triggeredBy, extra = {}) {
   }
 
   spot.state = rule.to;
-  spot.ageText = "just now";
+  if (trigger!=="expire") spot.ageText = "just now";
   spot.updatedAt = new Date().toISOString();
 
   log("state_transition", {
@@ -318,7 +323,7 @@ function pinIcon(spot, options = {}) {
   const classes = ["pin", spot.status, options.pickup ? "is-pickup" : "", options.chosen ? "is-chosen" : "", options.pending ? "is-pending" : "", options.bare ? "is-bare" : ""]
     .filter(Boolean)
     .join(" ");
-  const label = options.bare ? "" : `<span class="pin-label">${eta}<span class="pin-name">${escapeHtml(spot.name)}</span><i data-lucide="chevron-right"></i></span>`;
+  const label = options.bare ? "" : `<span class="pin-label">${eta}<span class="pin-name">${escapeHtml(spot.name)}</span>${options.interactive?'<i data-lucide="chevron-right"></i>':""}</span>`;
   return L.divIcon({
     className: "pin-shell",
     html: `<div class="${classes}">${glyph}${label}</div>`,
@@ -348,10 +353,11 @@ function renderMap() {
   const hidePickup = role === "passenger" && ui.screen === "locate";
   /* While browsing suggestions only the original pin and its candidates are drawn.
      The passenger's active pickup carries the label; the original remains a reference dot. */
-  const browsing = role === "passenger" && ui.screen === "pickup" && ui.suggestionsOpen && selected;
+  const browsing = role === "passenger" && passengerPickupState().browsing;
   const candidateIds = browsing ? new Set(alternativesFor(selected).map((item) => item.spot.id)) : null;
 
   state.spots.forEach((spot) => {
+    if (state.scenario.study && spot.area!==getSpot(state.scenario.presetSpot).area) return;
     if (!validCoords(spot.coordinates)) return;
     const isPickup = !hidePickup && selected && spot.id === selected.id;
     const isChosen = chosen && spot.id === chosen.id;
@@ -360,13 +366,15 @@ function renderMap() {
     if (candidateIds && !isPickup && !candidateIds.has(spot.id)) return;
     const isActivePickup = !hidePickup && activePickup && spot.id === activePickup.id;
     const eta = role === "passenger"
-      ? (isActivePickup && (walkOrigin().device || isChosen) ? walkFor(spot) : null)
+      ? (isActivePickup && (walkOrigin()?.device || isChosen) ? walkFor(spot) : null)
       : (isPickup || isChosen ? spot.driverEta : null);
     const etaLabel = role === "passenger" ? "MIN WALK" : "MIN";
     const bare = (Boolean(candidateIds) && !isPickup && !isChosen)
       || (role === "passenger" && isPickup && !isActivePickup);
+    const interactive=role === "driver" || (passengerPickupState().canOpenSuggestions && alternativesFor(selected).some(item=>item.spot.id===spot.id));
     const marker = L.marker(spot.coordinates, {
-      icon: pinIcon(spot, { pickup: isPickup, chosen: isChosen, eta, etaLabel, bare }),
+      interactive,
+      icon: pinIcon(spot, { pickup: isPickup, chosen: isChosen, eta, etaLabel, bare, interactive }),
       keyboard: false,
       zIndexOffset: isActivePickup ? 1000 : isPickup || isChosen ? 900 : 0,
     });
@@ -381,7 +389,7 @@ function renderMap() {
     }).addTo(markerLayer);
   }
 
-  const showCar = role === "driver" || ui.screen === "confirmed";
+  const showCar = role === "driver" || (!state.scenario.p4 && ui.screen === "confirmed");
   if (showCar) {
     L.marker(DRIVER_POSITION, { icon: carIcon(), keyboard: false, interactive: false }).addTo(markerLayer);
   }
@@ -412,7 +420,7 @@ function renderMap() {
    from the sheet level that is about to apply, so callers set the sheet before focusing. */
 
 const FOCUS_MARGIN = 24;
-const MIN_VISIBLE_MAP = 80;
+const MIN_VISIBLE_MAP = 24;
 const PAIR_PADDING = 28;
 let mapFocus = null;
 
@@ -429,6 +437,7 @@ function focusSpot(spot, zoom = 16) {
   mapFocus = { type: "spot", spot, zoom };
   const strip = visibleMapStrip();
   if (strip.bottom - strip.top < MIN_VISIBLE_MAP) return;
+  if (state.scenario.p4) { map.setView(spot.coordinates,zoom,{animate:false}); return; }
   const size = map.getSize();
   const target = L.point(size.x / 2, (strip.top + strip.bottom) / 2);
   const centre = map.project(spot.coordinates, zoom).add(L.point(size.x / 2, size.y / 2).subtract(target));
@@ -443,6 +452,7 @@ function focusPoints(list) {
   if (unique.length === 0) return;
   if (unique.length === 1) return focusSpot(unique[0], 17);
   mapFocus = { type: "points", points: unique };
+  if (state.scenario.p4) { map.fitBounds(L.latLngBounds(unique.map(p=>p.coordinates)),{padding:[20,20],maxZoom:17,animate:false}); return; }
   const strip = visibleMapStrip();
   if (strip.bottom - strip.top < MIN_VISIBLE_MAP) return;
   const size = map.getSize();
@@ -463,8 +473,8 @@ function focusPickup() {
   const ui = state.ui;
   const selected = selectedSpot();
   const points = [walkOrigin(), selected, getSpot(ui.chosenAlternativeId)];
-  if (ui.screen === "confirmed") points.unshift({ coordinates: DRIVER_POSITION });
-  if (ui.screen === "pickup" && ui.suggestionsOpen && selected) points.push(...alternativesFor(selected).map((item) => item.spot));
+  if (ui.screen === "confirmed" && !state.scenario.p4) points.unshift({ coordinates: DRIVER_POSITION });
+  if (passengerPickupState().browsing && selected) points.push(...alternativesFor(selected).map((item) => item.spot));
   focusPoints(points);
 }
 
@@ -476,6 +486,7 @@ function refocusMap() {
 }
 
 function onPinTap(spotId) {
+  if (!studyCanInteract()) return;
   const spot = getSpot(spotId);
   if (!spot) return;
   if (state.session.role === "driver") {
@@ -490,7 +501,7 @@ function onPinTap(spotId) {
   }
   if (state.ui.screen !== "pickup") return;
   const selected = selectedSpot();
-  if (!selected || spot.id === selected.id || state.scenario.suggestions === "none") return;
+  if (!selected || spot.id === selected.id || !passengerPickupState().canOpenSuggestions) return;
   if (alternativesFor(selected).some((item) => item.spot.id === spot.id)) {
     if (!state.ui.suggestionsOpen) {
       state.ui.suggestionsOpen = true;
@@ -624,10 +635,10 @@ function confirmCentre() {
     reportCount: 0,
     ageText: "",
     driverEta: nearest ? nearest.spot.driverEta + 1 : 6,
-    stepFree: true,
     reports: [],
     addedBy: "passenger",
     lastReporter: null,
+    area:state.scenario.study?getSpot(state.scenario.presetSpot).area:nearest?.spot.area,
     custom: true,
   };
   state.spots.push(pin);
@@ -683,9 +694,29 @@ function centreMapOnUserPosition(position, options = {}) {
   const viewportCentre = L.point(mapSize.x / 2, mapSize.y / 2);
   const adjustedCentre = locationPoint.add(viewportCentre.subtract(gpsMarkerPoint));
   map.setView(map.unproject(adjustedCentre, zoom), zoom, { animate: options.animate === true });
+  if (!options.animate && state.ui.screen === "locate") {
+    const line = $("#locate-status");
+    if (line) line.textContent = locateStatusLine(resolveCentre());
+  }
+}
+
+function recenterPassengerPosition() {
+  if (state.session.role !== "passenger" || state.ui.screen !== "locate") return;
+  if (state.scenario.study || !state.session.useGps) {
+    if (state.scenario.study) {
+      checkStudyDeadline();
+      if (state.attempt.status === "ended" || state.attempt.pausedAt) return;
+    }
+    centreMapOnUserPosition(state.ui.userPosition, { animate: true });
+    log("map_recentered", { position_source: state.scenario.study ? "scenario" : "simulated" });
+  } else {
+    requestUserPosition({ recenter: true, manual: true });
+  }
 }
 
 function requestUserPosition(options = {}) {
+  if (state.scenario.study || !state.session.useGps) return;
+  const requestSessionId=state.session.id;
   const { recenter = true, manual = false } = options;
   if (state.session.role !== "passenger") return;
   if (!navigator.geolocation) {
@@ -696,6 +727,7 @@ function requestUserPosition(options = {}) {
   state.ui.gpsAttempted = true;
   navigator.geolocation.getCurrentPosition(
     (position) => {
+      if (state.scenario.study || !state.session.useGps || requestSessionId!==state.session.id) return;
       const coords = [Number(position.coords.latitude.toFixed(5)), Number(position.coords.longitude.toFixed(5)), Math.round(position.coords.accuracy || 0)];
       const inside = inBounds([coords[0], coords[1]]);
       state.ui.userPosition = inside ? coords : [...DEFAULT_GPS_POSITION, 0];
@@ -714,6 +746,7 @@ function requestUserPosition(options = {}) {
     },
     (error) => {
       const status = error.code === 1 ? "denied" : error.code === 3 ? "timeout" : "unavailable";
+      if (state.scenario.study || requestSessionId!==state.session.id) return;
       log("geolocation_result", { status, manual });
       if (manual) showToast("Location not available", status === "denied" ? "Location permission was refused." : "Could not get a position. Drag the map instead.");
     },
@@ -723,18 +756,19 @@ function requestUserPosition(options = {}) {
 
 /* ---------- Bottom sheet ---------- */
 
-const SHEET_LEVELS = { peek: 0.38, half: 0.6, full: 0.92 };
+const SHEET_LEVELS = { peek: 0.38, half: 0.6, study:0.82, full: 0.92 };
 const SHEET_TRANSITION_MS = 240;
 let sheetLevel = "half";
 let dragging = null;
 
 function setSheet(level) {
+  if (state.scenario.p4 && level==="half") level="study";
   sheetLevel = level;
   const phoneHeight = $("#phone").clientHeight;
   const sheetHeight = Math.round(phoneHeight * SHEET_LEVELS[level]);
   $("#sheet").style.height = `${sheetHeight}px`;
   $("#phone").style.setProperty("--sheet-height", `${sheetHeight}px`);
-  window.setTimeout(() => map.invalidateSize(), SHEET_TRANSITION_MS);
+  window.setTimeout(() => { map.invalidateSize(); if (state.scenario.study && state.attempt.status==="ready" && state.ui.screen==="locate") centreMapOnUserPosition(state.ui.userPosition); else refocusMap(); }, SHEET_TRANSITION_MS);
 }
 
 function snapSheet(level) {
@@ -811,209 +845,72 @@ function initSheetDrag() {
 /* ---------- Templates ---------- */
 
 function statusCard(spot, options = {}) {
-  const explain = options.explain !== false;
-  if (!validCoords(spot.coordinates)) {
-    return `
-      <div class="status-card caution">
-        <span class="status-icon"><i data-lucide="map-pin-off"></i></span>
-        <div>
-          <p class="status-label">Location unavailable</p>
-          <p class="status-reason">The pin has no usable location data. Ask the facilitator to reset the scenario.</p>
-        </div>
-      </div>`;
-  }
-  return `
-    <div class="status-card ${spot.status}">
-      <span class="status-icon"><i data-lucide="${statusIcon(spot.status)}"></i></span>
-      <div>
-        <p class="status-label">${STATUS_LABEL[spot.status]}</p>
-        ${explain ? `<p class="status-reason">${escapeHtml(spot.reason)}</p>` : ""}
-        ${explain && spot.validity ? `<p class="status-validity"><i data-lucide="calendar-clock"></i>${escapeHtml(spot.validity)}</p>` : ""}
-        <p class="status-meta"><i data-lucide="badge-check"></i>${escapeHtml(freshnessText(spot))}</p>
-        <p class="status-source">Source: ${sourceText(spot)}</p>
-      </div>
-    </div>`;
+  const explain=options.explain ?? supportingVisible();
+  if (!validCoords(spot.coordinates)) return '<div class="status-card caution"><p>Location unavailable. Please tell the facilitator.</p></div>';
+  const history=explain && spot.history?.length ? `<details class="evidence-history"><summary>Earlier pickup information</summary>${spot.history.map(h=>`<p>${escapeHtml(STATUS_LABEL[h.suitability])}: ${escapeHtml(h.reason)}. ${escapeHtml(h.evidence_state)}, ${escapeHtml(h.age)}; ${h.report_count} reports.</p>`).join("")}</details>`:"";
+  return `<div class="status-card ${spot.status} ${state.scenario.p4?"matched-status":""}">
+    <span class="status-icon"><i data-lucide="${statusIcon(spot.status)}"></i></span><div>
+    <p class="status-label">${STATUS_LABEL[spot.status]}</p>
+    <div class="supporting-slot">${explain?`<p class="status-reason">${escapeHtml(spot.reason)}</p><p class="status-meta">${escapeHtml(freshnessText(spot))}</p><p class="status-source">Source: ${escapeHtml(sourceText(spot))}</p>`:""}</div>
+    ${history}</div></div>`;
 }
-
-function statusTag(spot) {
-  return `<span class="tag ${spot.status}">${STATUS_LABEL[spot.status]}</span>`;
+function statusTag(spot) { return `<span class="tag ${spot.status}">${STATUS_LABEL[spot.status]}</span>`; }
+/* Shared by templates, map shortcuts and action handlers. */
+function passengerPickupState(spot = selectedSpot()) {
+ const ui=state.ui, scenario=state.scenario, a=state.attempt;
+ const frozen=Boolean(scenario.study && (a.status==="ended" || a.pausedAt));
+ const active=state.session.role==="passenger" && ui.screen==="pickup" && !frozen && !ui.completed;
+ const valid=Boolean(spot && validCoords(spot.coordinates));
+ const staged=scenario.id==="P3" && ["inspect","await_reveal","reveal"].includes(a.p3Stage);
+ const suitable=spot?.status==="suitable";
+ const alternatives=alternativesFor(spot);
+ const canSuggest=active && valid && !staged && !suitable && scenario.suggestions!=="none" && alternatives.length>0;
+ const canKeep=active && valid && !staged && !suitable;
+ const overriding=canKeep && ui.overridePending;
+ const chosen=canSuggest ? alternatives.find(item=>item.spot.id===ui.chosenAlternativeId)?.spot || null : null;
+ return {active,valid,staged,suitable,alternatives,canSuggest,canKeep,overriding,chosen,
+  browsing:canSuggest && ui.suggestionsOpen && !overriding,
+  canInspect:active && valid && staged && a.p3Stage==="inspect",
+  canReport:active && valid && !staged && !overriding,
+  canConfirmOriginal:active && valid && suitable && !staged,
+  canConfirmAlternative:Boolean(chosen && !overriding),
+  canOpenSuggestions:canSuggest && !overriding};
 }
-
+function syncPassengerPickupState() {
+ if (state.session.role!=="passenger" || state.ui.screen!=="pickup") return;
+ const view=passengerPickupState();
+ if (!view.canSuggest) { state.ui.suggestionsOpen=false; state.ui.chosenAlternativeId=null; }
+ else if (!view.chosen) state.ui.chosenAlternativeId=null;
+ if (!view.canKeep) state.ui.overridePending=false;
+}
 function passengerPickupTemplate(spot) {
-  const ui = state.ui;
-  const scenario = state.scenario;
-  const explain = scenario.variant !== "unexplained";
-  const suggestionsMode = scenario.suggestions;
-  const suitable = spot.status === "suitable" && validCoords(spot.coordinates);
-  const showSuggestions = suggestionsMode !== "none" && !suitable && validCoords(spot.coordinates);
-  const alternatives = showSuggestions ? alternativesFor(spot) : [];
-  const chosen = getSpot(ui.chosenAlternativeId);
-
-  const pressure = scenario.pressure
-    ? `<div class="late-banner">
-        <i data-lucide="alarm-clock"></i>
-        <div><strong>You're running late</strong><span>Driver arrives in <b id="countdown">${countdownText()}</b></span></div>
-      </div>`
-    : "";
-
-  const suggestionCards = alternatives
-    .map(
-      ({ spot: alt, walk }) => `
-        <button class="option-card ${chosen && chosen.id === alt.id ? "is-chosen" : ""}" type="button" data-alt="${alt.id}">
-          <span class="option-main">
-            <strong>${escapeHtml(alt.name)}</strong>
-            <span class="option-tags">${statusTag(alt)}<span class="tag">${alt.stepFree ? "Step-free" : "Stairs nearby"}</span></span>
-            ${explain ? `<span class="option-reason">${escapeHtml(alt.reason)}</span>` : ""}
-          </span>
-          <span class="option-meta"><strong>${walk ?? "?"} min walk</strong><span>Driver ${alt.driverEta} min</span></span>
-        </button>`,
-    )
-    .join("");
-
-  const suggestions = showSuggestions
-    ? `
-      <section class="suggestions">
-        <button class="section-toggle" type="button" id="toggle-suggestions" aria-expanded="${ui.suggestionsOpen}">
-          <span><strong>Suggested pickup spots</strong><small>${alternatives.length} nearby</small></span>
-          <i data-lucide="chevron-${ui.suggestionsOpen ? "up" : "down"}"></i>
-        </button>
-        ${
-          ui.suggestionsOpen
-            ? `<label class="toggle-row"><span>Step-free only</span><input type="checkbox" id="step-free" ${ui.stepFreeOnly ? "checked" : ""} /></label>
-               <div class="option-list">${suggestionCards || '<p class="muted">No spots match this filter.</p>'}</div>`
-            : ""
-        }
-      </section>`
-    : "";
-
-  let primary = "";
-  if (suitable || suggestionsMode === "none") {
-    primary = `<button class="button primary" type="button" id="confirm-pin"><i data-lucide="check"></i>Confirm pickup here</button>`;
-  } else if (chosen) {
-    primary = `<button class="button primary" type="button" id="confirm-alternative"><i data-lucide="check"></i>Confirm ${escapeHtml(chosen.name)}</button>`;
-  } else if (!ui.suggestionsOpen) {
-    primary = `<button class="button primary" type="button" id="open-suggestions"><i data-lucide="waypoints"></i>See suggested pickup spots</button>`;
-  } else {
-    primary = `<button class="button primary" type="button" disabled>Choose a pickup spot</button>`;
-  }
-
-  const keepPin =
-    suggestionsMode === "full" && !suitable && !ui.overridePending
-      ? `<button class="button text" type="button" id="keep-pin">Keep my pin anyway<i data-lucide="chevron-right"></i></button>`
-      : "";
-
-  const override = ui.overridePending
-    ? `
-      <div class="override-box">
-        <i data-lucide="shield-alert"></i>
-        <div>
-          <strong>${STATUS_LABEL[spot.status]} at ${escapeHtml(spot.name)}</strong>
-          ${explain ? `<span>${escapeHtml(spot.reason)}</span>` : ""}
-          <span>The driver may not be able to stop here. Keep this pin?</span>
-        </div>
-        <div class="row two">
-          <button class="button secondary" type="button" id="override-cancel">Go back</button>
-          <button class="button primary" type="button" id="override-confirm">Keep my pin</button>
-        </div>
-      </div>`
-    : "";
-
-  const origin = walkOrigin();
-  const walkToPin = origin && origin.device ? walkFor(spot) : null;
-  const walkLine = walkToPin ? `<p class="muted small"><i data-lucide="footprints"></i>${walkToPin} min walk from where you are</p>` : "";
-
-  /* Browsing suggestions: the pin summary and the filter stay put, the cards scroll on their
-     own, and the actions stay pinned, so the sheet can stay at half height over the map. */
-  if (showSuggestions && ui.suggestionsOpen) {
-    const lateStrip = scenario.pressure
-      ? `<div class="late-strip"><i data-lucide="alarm-clock"></i><span>Running late. Driver arrives in <b id="countdown">${countdownText()}</b></span></div>`
-      : "";
-    return `
-      <div class="browse-head">
-        ${lateStrip}
-        <button class="browse-summary" type="button" id="toggle-suggestions" aria-expanded="true">
-          <span class="swatch ${spot.status}"></span>
-          <span class="browse-summary-text"><strong>${escapeHtml(spot.name)}</strong><small>${STATUS_LABEL[spot.status]}${walkToPin ? ` · ${walkToPin} min walk` : ""}</small></span>
-          <i data-lucide="chevron-down"></i>
-        </button>
-        <div class="browse-bar">
-          <span><strong>Suggested pickup spots</strong><small>${alternatives.length} nearby</small></span>
-          <label class="toggle-row compact"><span>Step-free only</span><input type="checkbox" id="step-free" ${ui.stepFreeOnly ? "checked" : ""} /></label>
-        </div>
-      </div>
-      <div class="browse-list">
-        <div class="option-list">${suggestionCards || '<p class="muted">No spots match this filter.</p>'}</div>
-        <button class="button ghost" type="button" id="open-report"><i data-lucide="flag"></i>Report a problem here</button>
-      </div>
-      <div class="browse-actions">
-        ${primary}
-        ${keepPin}
-        ${override}
-      </div>`;
-  }
-
-  return `
-    ${pressure}
-    <header class="sheet-header">
-      <p class="eyebrow">Confirm your pickup spot</p>
-      <h1>${escapeHtml(spot.name)}</h1>
-      <p class="muted">${escapeHtml(spot.address)}</p>
-      ${walkLine}
-    </header>
-    ${statusCard(spot, { explain })}
-    ${suggestions}
-    <div class="actions">
-      ${primary}
-      ${keepPin}
-      ${override}
-      <button class="button ghost" type="button" id="open-report"><i data-lucide="flag"></i>Report a problem here</button>
-    </div>`;
+ const ui=state.ui, scenario=state.scenario, a=state.attempt;
+ const view=passengerPickupState(spot);
+ if (!spot) return '<header class="sheet-header"><h1>Choose a pickup location</h1><p>Go back to the map to select a pickup.</p></header>';
+ const originalLabel=scenario.p4?"Your original pickup":"Confirm your pickup spot";
+ const head=`<header class="sheet-header"><p class="eyebrow">${originalLabel}</p><h1>${escapeHtml(spot.name)}</h1><p class="muted">${escapeHtml(spot.address)}</p></header>${statusCard(spot)}`;
+ if (!view.active || !view.valid) return head;
+ if (view.staged) return `${head}<div class="actions">${view.canInspect?'<button class="button primary" id="inspection-done" type="button">I’ve inspected this pickup</button>':'<p class="muted">Please tell the facilitator you have finished inspecting.</p>'}</div>`;
+ if (view.overriding) {
+  const message=spot.status==="unknown"?"Pickup availability here is unconfirmed. Use this pin?":"The driver may not be able to stop here. Keep this pin?";
+  return `${head}<div class="override-box ${spot.status}"><i data-lucide="${spot.status==="unknown"?"circle-help":"triangle-alert"}"></i><div><strong>${STATUS_LABEL[spot.status]}</strong><div class="override-support">${supportingVisible()?escapeHtml(spot.reason):""}</div><span>${message}</span></div><div class="row two"><button class="button secondary" id="override-cancel" type="button">Go back</button><button class="button primary" id="override-confirm" type="button">${spot.status==="unknown"?"Use this pin":"Keep my pin"}</button></div></div>`;
+ }
+ const cards=view.alternatives.map(({spot:alt,walk})=>`<button class="option-card ${view.chosen?.id===alt.id?"is-chosen":""}" type="button" data-alt="${alt.id}" aria-pressed="${view.chosen?.id===alt.id}">
+  <span class="option-main"><strong>${escapeHtml(alt.name)}</strong><span class="option-address">${escapeHtml(alt.address)}</span><span class="option-tags">${statusTag(alt)}</span>
+  <span class="alternative-support">${supportingVisible()?escapeHtml(alt.reason):""}${supportingVisible()&&!scenario.p4?`<span class="alternative-evidence">${escapeHtml(freshnessText(alt))}<br>Source: ${escapeHtml(sourceText(alt))}</span>`:""}</span></span><span class="option-meta"><strong>${walk ?? "?"} min walk</strong></span></button>`).join("");
+ const primary=view.canConfirmAlternative?`<button class="button primary" id="confirm-alternative" type="button">Confirm ${escapeHtml(view.chosen.name)}</button>`:view.canConfirmOriginal?'<button class="button primary" id="confirm-pin" type="button">Confirm pickup here</button>':"";
+ const keep=view.canKeep?`<button class="button ${view.canSuggest?"text":"primary"}" id="keep-pin" type="button">${spot.status==="unknown"?"Use this pickup anyway":"Keep my pin anyway"}</button>`:"";
+ const prompt=!primary && view.canSuggest?'<p class="muted">Choose a suggested pickup or keep your pin.</p>':!view.suitable && !view.canSuggest?'<p class="muted">No suggested alternatives are available. You can choose another location on the map or keep this pin.</p>':"";
+ const report=view.canReport?`<button class="button ghost" id="open-report" type="button">${view.canSuggest || scenario.p4?"Report a problem at the original pickup":"Report a problem here"}</button>`:"";
+ const actions=`${primary}${prompt}${keep}`;
+ if (view.browsing) return `<div class="browse-head">${head}<button class="section-toggle" id="toggle-suggestions" type="button" aria-expanded="true"><strong>Suggested pickup spots</strong><span>${view.alternatives.length} nearby</span></button></div><div class="browse-list"><div class="option-list">${cards}</div>${report}</div><div class="browse-actions">${actions}</div>`;
+ return `${head}${view.canOpenSuggestions?'<button class="button secondary" id="open-suggestions" type="button">See suggested pickup spots</button>':""}<div class="actions">${actions}${report}</div>`;
 }
-
 function passengerConfirmedTemplate(spot) {
-  const ui = state.ui;
-  const chosen = getSpot(ui.chosenAlternativeId) || spot;
-  const moved = chosen.id !== spot.id;
-  const origin = walkOrigin();
-  const fromDevice = Boolean(origin && origin.device);
-  const walk = moved || fromDevice ? walkFor(chosen) : null;
-  const walkNote = walk
-    ? `<p class="muted small"><i data-lucide="footprints"></i>${walk} min walk from ${fromDevice ? "where you are" : escapeHtml(spot.name)}</p>`
-    : moved
-      ? `<p class="muted small"><i data-lucide="footprints"></i>Moved from ${escapeHtml(spot.name)}</p>`
-      : "";
-  const statusNote =
-    !moved && chosen.status !== "suitable"
-      ? `<p class="warn small"><i data-lucide="info"></i>${DRIVER_NAME} has been told this spot is ${STATUS_LABEL[chosen.status].toLowerCase()}.</p>`
-      : "";
-  const note = walkNote + statusNote;
-  if (ui.completed) {
-    return `
-      <header class="sheet-header">
-        <p class="eyebrow">Session complete</p>
-        <h1>Thanks</h1>
-        <p class="muted">Please hand the device back to the facilitator.</p>
-      </header>`;
-  }
-  return `
-    <header class="sheet-header">
-      <p class="eyebrow">Pickup confirmed</p>
-      <h1>${escapeHtml(chosen.name)}</h1>
-      <p class="muted">${escapeHtml(chosen.address)}</p>
-    </header>
-    ${statusCard(chosen)}
-    <div class="driver-card">
-      <span class="avatar">${DRIVER_NAME[0]}</span>
-      <div>
-        <strong>${DRIVER_NAME} is heading to ${escapeHtml(chosen.name)}</strong>
-        <span>Arriving in ${chosen.driverEta} min · White Toyota Camry · 123 ABC</span>
-      </div>
-    </div>
-    ${note}
-    <div class="actions">
-      <button class="button primary" type="button" id="done"><i data-lucide="check"></i>Done</button>
-      <button class="button ghost" type="button" id="open-report"><i data-lucide="flag"></i>Report a problem here</button>
-    </div>`;
+ const chosen=getSpot(state.ui.chosenAlternativeId)||spot;
+ if (state.ui.completed) return '<header class="sheet-header"><h1>Thanks</h1><p>Please hand the device back to the facilitator.</p></header>';
+ return `<header class="sheet-header"><p class="eyebrow">Pickup confirmed</p><h1>${escapeHtml(chosen.name)}</h1><p class="muted">${escapeHtml(chosen.address)}</p></header>${statusCard(chosen)}
+ <p>Your pickup choice has been recorded.</p>${state.scenario.study?'<p class="muted">Please hand the device back to the facilitator.</p>':'<button class="button primary" id="done" type="button">Done</button>'}`;
 }
 
 function driverKnownSpotsTemplate() {
@@ -1063,6 +960,17 @@ function driverAddTemplate() {
     <p class="muted small"><i data-lucide="map-pin-plus"></i>Or tap the map where the pickup spot is.</p>`;
 }
 
+function driverPickupTarget() {
+ return state.scenario.driverScreen === "accepted-alternative"
+  ? getSpot(state.ui.chosenAlternativeId) || getSpot(state.scenario.alternativeSpot)
+  : selectedSpot() || getSpot(state.scenario.presetSpot);
+}
+function canDriverSuggest() {
+ const target=driverPickupTarget();
+ return state.session.role==="driver" && !state.ui.driverAddMode && state.scenario.driverScreen==="kept-pin"
+  && target && validCoords(target.coordinates) && target.status!=="suitable" && alternativesFor(target).length>0;
+}
+
 function driverTemplate() {
   const ui = state.ui;
   const scenario = state.scenario;
@@ -1082,7 +990,7 @@ function driverTemplate() {
 
   const suggested = getSpot(ui.driverSuggested);
   const suggestBlock =
-    screen === "kept-pin"
+    canDriverSuggest()
       ? suggested
         ? `<div class="notice good"><i data-lucide="send"></i><div><strong>${escapeHtml(suggested.name)} sent to ${PASSENGER_NAME}</strong><span>Waiting for the passenger to accept.</span></div></div>`
         : ui.driverSuggestOpen
@@ -1115,7 +1023,7 @@ function driverTemplate() {
       <div class="right"><strong>1.2 km</strong><span>via Elizabeth St</span></div>
     </div>
     <div class="actions">
-      <button class="button primary" type="button" id="driver-confirm" ${ui.driverConfirmed ? "disabled" : ""}>
+      <button class="button primary" type="button" id="driver-confirm" ${ui.driverConfirmed || !validCoords(target.coordinates) ? "disabled" : ""}>
         <i data-lucide="${ui.driverConfirmed ? "circle-check-big" : "check"}"></i>${ui.driverConfirmed ? "Pickup plan confirmed" : "Confirm pickup plan"}
       </button>
       ${suggestBlock}
@@ -1134,8 +1042,10 @@ function searchGazetteer(query) {
     .filter((spot) => validCoords(spot.coordinates) && !spot.custom)
     .map((spot) => ({ name: spot.name, address: spot.address, spotId: spot.id }));
   const entries = [...GAZETTEER, ...spotsAsEntries.filter((entry) => !GAZETTEER.some((g) => g.name === entry.name))];
-  if (!query) return entries;
-  return entries.filter((entry) => `${entry.name} ${entry.address}`.toLowerCase().includes(query));
+  const local=state.scenario.study?entries.filter(e=>getSpot(e.spotId)?.area===getSpot(state.scenario.presetSpot).area):entries;
+  const normalise=text=>text.toLowerCase().replace(/[’']/g, "");
+  const matches=query?local.filter(entry=>normalise(`${entry.name} ${entry.address}`).includes(normalise(query))):local;
+  return matches.filter((entry,index)=>matches.findIndex(other=>other.spotId===entry.spotId)===index);
 }
 
 function renderSearch() {
@@ -1145,7 +1055,7 @@ function renderSearch() {
   $("#search-results").innerHTML = results
     .map((item) => {
       const spot = getSpot(item.spotId);
-      const km = spot && validCoords(spot.coordinates) ? (distanceMetres(CBD_CENTER, spot.coordinates) / 1000).toFixed(1) : "?";
+      const km = spot && validCoords(spot.coordinates) ? (distanceMetres(state.scenario.study?getSpot(state.scenario.presetSpot).coordinates:CBD_CENTER, spot.coordinates) / 1000).toFixed(1) : "?";
       return `
         <li>
           <button type="button" data-result="${item.spotId}" data-label="${escapeHtml(item.name)}">
@@ -1166,6 +1076,8 @@ function renderSearch() {
 /* The top-left back button steps out of the current layer: an open override prompt or
    suggestion list closes first, then the screen returns to the one before it. */
 function canGoBack() {
+  if (state.scenario.study && (state.attempt.status !== "running" || state.attempt.pausedAt)) return false;
+  if (state.scenario.p4 && !state.ui.overridePending) return false;
   const ui = state.ui;
   if (state.session.role === "driver") return ui.driverAddMode || ui.driverSuggestOpen;
   if (ui.screen === "pickup") return true;
@@ -1218,8 +1130,10 @@ function goBack() {
 
 function placePin(spotId, label, entry) {
   const spot = getSpot(spotId);
-  if (!spot) return;
+  if (!spot || (entry!=="preset" && !studyCanInteract())) return;
   const ui = state.ui;
+  if (state.scenario.p4 && spot.id!==state.scenario.presetSpot) return;
+  if (state.scenario.id==="P3" && state.attempt.p3Stage==="await_reveal") state.attempt.p3Stage="inspect";
   ui.selectedSpotId = spot.id;
   ui.searchLabel = label || spot.name;
   ui.screen = "pickup";
@@ -1237,7 +1151,7 @@ function placePin(spotId, label, entry) {
 function chooseAlternative(spotId) {
   const spot = getSpot(spotId);
   const origin = selectedSpot();
-  if (!spot || !origin) return;
+  if (!spot || !origin || !studyCanInteract() || !passengerPickupState().canOpenSuggestions || !alternativesFor(origin).some(a=>a.spot.id===spot.id)) return;
   state.ui.chosenAlternativeId = spot.id;
   state.ui.overridePending = false;
   log("alternative_selected", { spot_id: spot.id, walk_minutes: walkFor(spot), walk_origin: walkOriginKind(), driver_eta_minutes: spot.driverEta });
@@ -1247,33 +1161,27 @@ function chooseAlternative(spotId) {
   focusPickup();
 }
 
-function confirmPickup(outcome) {
-  const ui = state.ui;
-  const origin = selectedSpot();
-  const chosen = outcome === "alternative" ? getSpot(ui.chosenAlternativeId) : origin;
-  if (!chosen) return;
-  if (outcome !== "alternative") ui.chosenAlternativeId = null;
-  ui.screen = "confirmed";
-  ui.overridePending = false;
-  const walk = walkFor(chosen);
-  log("confirmed", { chosen_spot_id: chosen.id, outcome, walk_minutes: walk, walk_origin: walkOriginKind(), status: chosen.status });
-  log("scenario_completed", { outcome: outcome === "alternative" ? "alternative" : "original" });
-  render();
-  setSheet("half");
-  focusPickup();
-  showToast(
-    outcome === "alternative" ? "Pickup updated" : "Pickup confirmed",
-    outcome === "override" ? `${DRIVER_NAME} has been told about the pickup status.` : `${DRIVER_NAME} can see ${chosen.name}.`,
-  );
+function requestPickupOverride() {
+ if (!studyCanInteract() || !passengerPickupState().canKeep) return;
+ state.ui.overridePending=true;
+ log("override_attempted", {spot_id:state.ui.selectedSpotId});
+ render(); setSheet("full");
 }
 
-function countdownText() {
-  const ui = state.ui;
-  const total = state.scenario.countdownSeconds || 240;
-  if (!ui.countdownStartedAt) return formatSeconds(total);
-  const elapsed = Math.floor((Date.now() - new Date(ui.countdownStartedAt).getTime()) / 1000);
-  const remaining = total - elapsed;
-  return remaining > 0 ? formatSeconds(remaining) : "now";
+function confirmPickup(outcome) {
+ if (!studyCanInteract()) return;
+ const ui=state.ui, origin=selectedSpot();
+ const view=passengerPickupState();
+ if (outcome==="original" ? !view.canConfirmOriginal : outcome==="alternative" ? !view.canConfirmAlternative : outcome==="override" ? !view.overriding : true) return;
+ const chosen=outcome==="alternative"?getSpot(ui.chosenAlternativeId):origin;
+ if (!chosen || !validCoords(chosen.coordinates)) return;
+ if (outcome!=="alternative") ui.chosenAlternativeId=null;
+ ui.screen="confirmed"; ui.overridePending=false;
+ const snapshot=spotSnapshot(chosen);
+ log("confirmed",{chosen_spot_id:chosen.id,outcome,walk_minutes:walkFor(chosen),walk_origin:walkOriginKind(),chosen:snapshot,displayed:displayedSnapshot(chosen)});
+ if (state.scenario.study) finishTask("confirmed",chosen,outcome==="alternative"?"accept":"override");
+ else log("scenario_completed",{outcome});
+ render(); setSheet("half"); focusPickup();
 }
 
 function formatSeconds(seconds) {
@@ -1282,17 +1190,15 @@ function formatSeconds(seconds) {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-window.setInterval(() => {
-  const el = $("#countdown");
-  if (el) el.textContent = countdownText();
-}, 1000);
-
 /* ---------- Report dialog ---------- */
 
 let reportContext = null;
 
 function openReport(context) {
-  reportContext = context;
+  if (!studyCanInteract()) return;
+  if (context.actor==="passenger" && !passengerPickupState().canReport) return;
+  reportContext = {...context, submissionId:crypto.randomUUID()};
+  $("#report-error").textContent="";
   const dialog = $("#report-dialog");
   const spot = context.spotId ? getSpot(context.spotId) : null;
   const pending = context.pending ? state.ui.driverPending : null;
@@ -1309,7 +1215,7 @@ function openReport(context) {
   $("#report-name").value = "";
   $("#report-name").placeholder = pending ? `For example, ${pending.name}` : "";
   const options = REPORT_REASONS.filter((reason) => !reason.driverOnly || context.actor === "driver");
-  const defaultValue = suggest ? "Good pickup spot" : options.find((reason) => !reason.driverOnly).value;
+  const defaultValue = null;
   $("#report-options").innerHTML = options
     .map(
       (reason) => `
@@ -1325,7 +1231,7 @@ function openReport(context) {
   log("report_opened", { actor: context.actor, spot_id: spot ? spot.id : null, mode: context.mode });
   $("#dialog-backdrop").hidden = false;
   dialog.show();
-  const firstInput = pending ? $("#report-name") : $("#report-options input:checked");
+  const firstInput = pending ? $("#report-name") : $("#report-options input");
   if (firstInput) firstInput.focus();
 }
 
@@ -1345,11 +1251,20 @@ function closeReport(cancelled) {
 
 function handleReportSubmit(event) {
   event.preventDefault();
-  if (!reportContext) return;
+  if (!reportContext || !studyCanInteract()) return;
   const reason = new FormData(event.currentTarget).get("report-reason");
   const note = $("#report-note").value.trim();
   const actor = reportContext.actor;
-  const report = { reason, note, actor, at: new Date().toISOString() };
+  const report = { id:reportContext.submissionId, reason, note, actor, at: new Date().toISOString() };
+  const targetId=state.ui.badReportTarget?"unknown-target":reportContext.spotId;
+  state.attempt.reportAttemptCount++;
+  log("report_attempted",{submission_id:report.id,spot_id:targetId,reason,note_present:Boolean(note),actor});
+  const reject=(code,message)=>{ log("report_rejected",{submission_id:report.id,spot_id:targetId,code}); $("#report-error").textContent=message; };
+  const allowed=REPORT_REASONS.filter(r=>!r.driverOnly || actor==="driver");
+  if (!allowed.some(r=>r.value===reason)) return reject("missing_or_unsupported_category","Choose a category that matches what you observed. Use the note for extra detail.");
+  if (!reportContext.pending && !getSpot(targetId)) return reject("unknown_target","This pickup location is unavailable. Close the form and choose a valid point.");
+  if (state.ui.failNextReport) { state.ui.failNextReport=false; return reject("simulated_failure","The report could not be submitted. Your entries are saved here; try again."); }
+  if (state.spots.some(s=>s.reports.some(r=>r.id===report.id))) return reject("duplicate_submission","This report has already been received.");
   let spot;
 
   if (reportContext.pending && state.ui.driverPending) {
@@ -1367,8 +1282,7 @@ function handleReportSubmit(event) {
       reportCount: 1,
       ageText: "just now",
       driverEta: nearest ? nearest.spot.driverEta : 5,
-      stepFree: true,
-      reports: [report],
+        reports: [report],
       addedBy: "driver",
       lastReporter: "driver",
       updatedAt: report.at,
@@ -1400,13 +1314,22 @@ function handleReportSubmit(event) {
     if (state.ui.driverAddMode) state.ui.driverAddMode = false;
   }
 
+  state.ui.lastAcceptedReport=structuredClone(report);
+  state.ui.suggestionsOpen=true;
+  state.ui.lastAcceptedTarget=spot.id;
+  log("report_accepted",{submission_id:report.id,spot_id:spot.id,reason,actor,chosen:spotSnapshot(spot),displayed:displayedSnapshot(spot)});
+  state.attempt.reportCount++;
+  if (state.scenario.p4) log("p4_report_flagged",{spot_id:spot.id});
+  if (state.scenario.id==="P3" && state.attempt.p3Stage==="report" && spot.id===state.scenario.presetSpot && ["Limited access","Construction or event"].includes(reason)) {
+    state.attempt.reportAccepted=true; state.attempt.p3Stage="relocate";
+    log("p3_valid_obstruction_report_accepted",{spot_id:spot.id});
+  }
   log("report_submitted", { spot_id: spot.id, reason, note_present: Boolean(note), actor });
-  if (state.scenario.id === "R1-C") log("scenario_completed", { outcome: "report" });
   reportContext = null;
   $("#report-dialog").close();
   $("#dialog-backdrop").hidden = true;
   render();
-  showToast("Report shared", `${spot.name} is now marked as temporary until other drivers verify it.`);
+  showToast("Report received", supportingVisible()?`${spot.name}: awaiting verification.`:"Your report has been received.");
 }
 
 /* ---------- Facilitator ---------- */
@@ -1415,6 +1338,9 @@ let facilitatorTaps = [];
 
 function openFacilitator(open = true) {
   $("#facilitator").hidden = !open;
+  if (!open && state.scenario.study && !state.attempt.screenRevealedAt) {
+    state.attempt.screenRevealedAt=Date.now(); log("screen_revealed",{displayed:displayedSnapshot(selectedSpot())}); persist();
+  }
   if (open) renderFacilitator();
 }
 
@@ -1424,17 +1350,28 @@ function facilitatorSelectedScenario() {
 
 function loadScenario(scenarioId, participantId, variant, orderPosition, options = {}) {
   const scenario = getScenario(scenarioId);
-  state.scenario = scenario;
-  state.session = {
-    participantId: participantId || state.session.participantId || "P00",
-    role: scenario.role,
-    scenarioId: scenario.id,
-    variant: scenario.role === "passenger" ? variant || scenario.variant : "n/a",
-    orderPosition: Number(orderPosition) || 1,
-    useGps: state.session.useGps !== false,
-  };
+  if (state.scenario.study && state.attempt.status==="running") finishTask(options.reset?"reset_interrupted":"scenario_switched");
+  closeReport(false);
+  const sameParticipant=state.session.participantId===(participantId || state.session.participantId);
+  state.scenario=scenario;
+  if (!scenario.study && variant && scenario.role==="passenger") scenario.variant=variant;
+  state.attempt=newAttempt();
+  const mode=options.mode || state.session.mode || "study";
+  const prepared=options.prepared ?? (mode === "study" && Boolean(scenario.study));
+  state.session={participantId:participantId||state.session.participantId||"P00",role:scenario.role,scenarioId:scenario.id,variant:scenario.role==="passenger"?scenario.variant:"n/a",orderPosition:Number(orderPosition)||1,useGps:scenario.study?false:state.session.useGps,mode,prepared,id:sameParticipant && !options.newSession && mode === state.session.mode?state.session.id:crypto.randomUUID(),attemptId:state.attempt.id,attemptKind:options.reset?"retry":"initial",group:STUDY_GROUPS[options.group]?options.group:state.session.group||"A",location:scenario.location||scenario.presetSpot,device:navigator.userAgent,thinkAloud:false};
+  if (mode === "preview") state.attempt.status="running";
+  $("#fac-end-options").hidden=true;
+  lastViewSignature="";
+  if ($("#fac-scenario").options.length) $("#fac-scenario").value=scenario.id;
+  $("#fac-pid").value=state.session.participantId;
+  $("#fac-variant").value=scenario.variant;
+  $("#fac-order").value=String(state.session.orderPosition);
+  $("#fac-group").value=state.session.group;
+  $("#fac-preview-scenario").value=scenario.id;
+  $("#fac-think-aloud").checked=false;
+  $("#toast-region").innerHTML="";
   resetSpotsForScenario();
-  log("scenario_started", {
+  log("scenario_loaded", {
     scenario_id: scenario.id,
     role: scenario.role,
     entry: scenario.entry,
@@ -1444,6 +1381,9 @@ function loadScenario(scenarioId, participantId, variant, orderPosition, options
     countdown_seconds: scenario.pressure ? scenario.countdownSeconds : null,
     driver_screen: scenario.role === "driver" ? scenario.driverScreen : null,
     reset: Boolean(options.reset),
+    allocation_match: !scenario.p4 || STUDY_GROUPS[state.session.group]?.[state.session.orderPosition-1]===scenario.id,
+    local_alternatives:alternativesFor(getSpot(scenario.presetSpot)).map(a=>({spot:spotSnapshot(a.spot),walk_minutes:a.walk})),
+    gps_enabled:state.session.useGps,
   });
   if (scenario.role === "passenger" && scenario.entry === "preset") {
     placePin(scenario.presetSpot, getSpot(scenario.presetSpot).name, "preset");
@@ -1455,14 +1395,16 @@ function loadScenario(scenarioId, participantId, variant, orderPosition, options
       focusPair({ coordinates: DRIVER_POSITION }, selectedSpot());
     } else {
       mapFocus = null;
-      map.setView(CBD_CENTER, 16);
+      map.setView(scenario.study?getSpot(scenario.presetSpot).coordinates:CBD_CENTER, 17);
       setSheet("peek");
-      if (state.session.useGps) requestUserPosition({ recenter: true });
+      if (scenario.study) centreMapOnUserPosition(state.ui.userPosition);
+      else if (state.session.useGps) requestUserPosition({ recenter: true });
     }
   }
 }
 
 function switchView(role) {
+  if (state.scenario.study) return;
   if (role === state.session.role) return;
   state.session.role = role;
   const ui = state.ui;
@@ -1489,6 +1431,8 @@ function resetSpotsForScenario() {
   const scenario = state.scenario;
   state.spots = cloneFixture();
   state.ui = defaultUi();
+  state.ui.userPosition=[...DEFAULT_GPS_POSITION,0];
+  if (scenario.study) state.ui.userPosition=[...getSpot(scenario.presetSpot).coordinates,0];
   if (scenario.role === "driver") {
     state.ui.screen = "driver";
     state.ui.selectedSpotId = scenario.presetSpot;
@@ -1512,14 +1456,26 @@ function renderFacilitator() {
     $("#fac-variant").value = state.session.variant === "unexplained" ? "unexplained" : "explained";
     $("#fac-order").value = String(state.session.orderPosition || 1);
     $("#fac-pid").value = state.session.participantId;
+    $("#fac-group").value=state.session.group;
+    $("#fac-preview-scenario").innerHTML=Object.keys(SCENARIOS).filter(id=>SCENARIOS[id].study).map(id=>`<option value="${id}">${id} · ${escapeHtml(SCENARIOS[id].label)}</option>`).join("");
+    $("#fac-preview-scenario").value=state.scenario.id;
     $("#fac-gps").checked = state.session.useGps !== false;
     $("#fac-break").innerHTML = BREAK_CONDITIONS.map((condition) => `<option value="${condition}">${condition}</option>`).join("");
   }
   const chosen = facilitatorSelectedScenario();
-  $("#fac-task").textContent = chosen.task || "";
-  $("#fac-variant").disabled = chosen.role !== "passenger";
+  $("#fac-task").textContent = state.scenario.task || "";
+  if (state.scenario.p4 && STUDY_GROUPS[state.session.group]?.[state.session.orderPosition-1]!==state.scenario.id) $("#fac-task").textContent+=" ALLOCATION CHECK: active condition differs from assigned group/order. Load the correct task before starting.";
+  $("#fac-variant").disabled = chosen.role !== "passenger" || chosen.study;
+  $("#fac-order").disabled=Boolean(chosen.study);
+  $("#fac-variant").closest?.(".fac-grid")?.toggleAttribute("hidden", Boolean(chosen.study));
+  $("#fac-gps").closest?.("label")?.toggleAttribute("hidden", state.session.mode !== "technical");
+  $("#fac-gps").disabled=Boolean(state.scenario.study);
+  $("#fac-gps").checked=state.session.useGps;
+  $("#fac-switch").disabled=Boolean(state.scenario.study);
+  renderStudyControls();
+  $("#fac-break-apply").disabled=Boolean(state.scenario.study);
   $("#fac-session-summary").textContent =
-    `Active: ${state.session.participantId} · ${state.session.role} · ${state.scenario.id} · ${state.session.variant} · order ${state.session.orderPosition}`;
+    isPreview() ? `Preview · ${state.scenario.id}` : sessionPrepared() ? `${state.session.participantId} · Group ${state.session.group} · ${state.scenario.id}` : "Session setup";
   $("#fac-switch").textContent = state.session.role === "driver" ? "Show passenger view (keep spots)" : "Show driver view (keep spots)";
 
   $("#fac-spots").innerHTML = state.spots
@@ -1531,20 +1487,21 @@ function renderFacilitator() {
             <span>${spot.state} · ${STATUS_LABEL[spot.status]}${validCoords(spot.coordinates) ? "" : " · no location"}</span>
           </div>
           <div class="fac-spot-actions">
-            <button type="button" data-fac="verify" data-spot="${spot.id}" ${spot.state === "temporary" ? "" : "disabled"}>Verify</button>
-            <select data-fac-status="${spot.id}" aria-label="Corrected status" ${spot.state === "verified" ? "" : "disabled"}>
+            <button type="button" data-fac="verify" data-spot="${spot.id}" ${!state.scenario.study && spot.state === "temporary" ? "" : "disabled"}>Verify</button>
+            <select data-fac-status="${spot.id}" aria-label="Corrected status" ${!state.scenario.study && spot.state === "verified" ? "" : "disabled"}>
               <option value="suitable">suitable</option>
               <option value="caution">caution</option>
               <option value="blocked">not recommended</option>
             </select>
-            <button type="button" data-fac="correct" data-spot="${spot.id}" ${spot.state === "verified" ? "" : "disabled"}>Correct</button>
-            <button type="button" data-fac="expire" data-spot="${spot.id}" ${spot.state === "expired" ? "disabled" : ""}>Expire</button>
+            <button type="button" data-fac="correct" data-spot="${spot.id}" ${!state.scenario.study && spot.state === "verified" ? "" : "disabled"}>Correct</button>
+            <button type="button" data-fac="expire" data-spot="${spot.id}" ${state.scenario.study || spot.state === "expired" ? "disabled" : ""}>Expire</button>
           </div>
         </div>`,
     )
     .join("");
   $$("[data-fac]").forEach((button) => {
     button.addEventListener("click", () => {
+      if (state.scenario.study) return;
       const spotId = button.dataset.spot;
       const action = button.dataset.fac;
       const extra = action === "correct" ? { status: $(`[data-fac-status="${spotId}"]`).value } : {};
@@ -1552,7 +1509,7 @@ function renderFacilitator() {
     });
   });
 
-  $("#fac-log-count").textContent = `${EventLog.count()} events stored on this device.`;
+  $("#fac-log-count").textContent = `${EventLog.count()} events stored on this device.${EventLog.storageWarning()?" Storage unavailable: export this session before closing the page.":""}`;
   $("#fac-log-tail").innerHTML = EventLog.all()
     .slice(-8)
     .reverse()
@@ -1561,6 +1518,25 @@ function renderFacilitator() {
   refreshIcons();
 }
 
+function applyTechnicalFault() {
+ if (state.scenario.study) return;
+ const condition=$("#fac-break").value, spot=selectedSpot()||getSpot(state.scenario.presetSpot);
+ log("break_condition_applied",{condition});
+ if (condition==="reload") {persist(); window.location.reload(); return;}
+ if (condition==="bad_location_data" && spot) spot.coordinates=null;
+ if (condition==="report_failure") state.ui.failNextReport=true;
+ if (condition==="bad_report_target") state.ui.badReportTarget=!state.ui.badReportTarget;
+ if (condition==="interrupt_mid_report") closeReport(true);
+ if (condition==="conflicting_reports" && spot) transition(spot.id,"report","driver",{report:{id:crypto.randomUUID(),actor:"driver",reason:"Good pickup spot",note:"Conflicting technical test observation",at:new Date().toISOString()}});
+ if (condition==="duplicate_report") {
+  const report=state.ui.lastAcceptedReport;
+  if (report) {
+   log("report_attempted",{submission_id:report.id,spot_id:state.ui.lastAcceptedTarget,reason:report.reason,technical_replay:true});
+   log("report_rejected",{submission_id:report.id,spot_id:state.ui.lastAcceptedTarget,code:"duplicate_submission"});
+  } else {showToast("Submit a report first","The duplicate test replays the last accepted submission ID.");return;}
+ }
+ render(); showToast("Technical condition applied",condition);
+}
 function initFacilitator() {
   $("#facilitator-close").addEventListener("click", () => openFacilitator(false));
   $("#fac-scenario").addEventListener("change", () => {
@@ -1569,16 +1545,21 @@ function initFacilitator() {
     renderFacilitator();
   });
   $("#fac-gps").addEventListener("change", () => {
-    state.session.useGps = $("#fac-gps").checked;
+    state.session.useGps = state.scenario.study?false:$("#fac-gps").checked;
     log("gps_setting_changed", { enabled: state.session.useGps });
     render();
   });
   $("#fac-load").addEventListener("click", () => {
-    loadScenario($("#fac-scenario").value, $("#fac-pid").value.trim(), $("#fac-variant").value, $("#fac-order").value);
+    if (timedTaskRunning()) return;
+    const scenario=facilitatorSelectedScenario();
+    const group=state.session.group || $("#fac-group").value;
+    const order=scenario.p4 ? Math.max(1,STUDY_GROUPS[group].indexOf(scenario.id)+1) : 1;
+    loadScenario(scenario.id, state.session.participantId, $("#fac-variant").value, order,{group,mode:scenario.study ? (isPreview()?"preview":"study") : "technical"});
     openFacilitator(false);
-    showToast("Scenario loaded", `${state.scenario.id} for ${state.session.participantId}.`);
+    openFacilitator(true);
   });
   $("#fac-reset").addEventListener("click", () => {
+    if (timedTaskRunning()) return;
     loadScenario(state.scenario.id, state.session.participantId, state.session.variant, state.session.orderPosition, { reset: true });
     renderFacilitator();
     showToast("Reset", "Spots and screen restored for this scenario. The log was kept.");
@@ -1588,25 +1569,8 @@ function initFacilitator() {
     renderFacilitator();
     showToast("View switched", `Now showing the ${state.session.role} view with the same spots.`);
   });
-  $("#fac-break-apply").addEventListener("click", () => {
-    const condition = $("#fac-break").value;
-    log("break_condition_applied", { condition });
-    if (condition === "reload") {
-      persist();
-      window.location.reload();
-      return;
-    }
-    if (condition === "bad_location_data") {
-      const spot = selectedSpot() || getSpot(state.scenario.presetSpot);
-      if (spot) {
-        spot.coordinates = null;
-        state.ui.badLocationLogged = false;
-      }
-      render();
-    }
-    renderFacilitator();
-    showToast("Break condition marked", condition);
-  });
+  $("#fac-break-apply").addEventListener("click",applyTechnicalFault);
+  $("#fac-export-summary").addEventListener("click",()=>exportLog("summary",false));
   $("#fac-export-json").addEventListener("click", () => exportLog("json", false));
   $("#fac-export-csv").addEventListener("click", () => exportLog("csv", false));
   $("#fac-share").addEventListener("click", () => exportLog("json", true));
@@ -1617,7 +1581,7 @@ function initFacilitator() {
   });
   document.addEventListener("pp:log", () => {
     if (!$("#facilitator").hidden) {
-      $("#fac-log-count").textContent = `${EventLog.count()} events stored on this device.`;
+      $("#fac-log-count").textContent = `${EventLog.count()} events stored on this device.${EventLog.storageWarning()?" Storage unavailable: export this session before closing the page.":""}`;
     }
   });
   document.addEventListener("keydown", (event) => {
@@ -1643,7 +1607,7 @@ async function exportLog(format, preferShare) {
     return;
   }
   const result = await EventLog.exportAs(state.session, format, preferShare);
-  const name = EventLog.filename(state.session, format === "csv" ? "csv" : "json");
+  const name = EventLog.filename(state.session, format === "summary" ? "summary.csv" : format === "csv" ? "csv" : "json");
   showToast(result === "shared" ? "Shared" : result === "downloaded" ? "Downloaded" : "Cancelled", name);
 }
 
@@ -1658,12 +1622,13 @@ function render() {
   const back = $("#back-button");
   const hint = $("#add-pin-hint");
 
+  syncPassengerPickupState();
   renderMap();
 
   const centrePin = $("#centre-pin");
-  centrePin.hidden = !(role === "passenger" && ui.screen === "locate");
+  centrePin.hidden = !(role === "passenger" && ui.screen === "locate" && !studyNotice());
   centrePin.style.top = `${pinPoint().y}px`;
-  $("#locate-me").hidden = !(role === "passenger" && state.session.useGps && ui.screen === "locate" && !ui.locateExpanded);
+  $("#locate-me").hidden = !(role === "passenger" && ui.screen === "locate" && !ui.locateExpanded && (!state.scenario.study || (state.attempt.status !== "ended" && !state.attempt.pausedAt)));
   renderUserPosition();
 
   sheet.hidden = false;
@@ -1672,7 +1637,9 @@ function render() {
   const body = $("#sheet-body");
   const previousList = body.querySelector(".browse-list");
   const listScroll = previousList ? previousList.scrollTop : 0;
-  if (role === "passenger" && ui.screen === "locate") {
+  const notice=studyNotice();
+  if (notice) { body.innerHTML=notice; }
+  else if (role === "passenger" && ui.screen === "locate") {
     body.innerHTML = locateTemplate();
   } else if (role === "driver") {
     body.innerHTML = driverTemplate();
@@ -1684,6 +1651,7 @@ function render() {
   const list = body.querySelector(".browse-list");
   body.classList.toggle("browsing", Boolean(list));
   if (list) list.scrollTop = listScroll;
+  $("#phone").classList.toggle("p4-study",Boolean(state.scenario.p4));
   bindSheetHandlers();
 
   logRenderEvents();
@@ -1695,7 +1663,7 @@ function render() {
 function bindSheetHandlers() {
   const on = (selector, handler) => {
     const el = $(selector);
-    if (el) el.addEventListener("click", handler);
+    if (el) el.addEventListener("click",event=>{if (studyCanInteract()) handler(event);});
   };
   on("#locate-search", () => {
     expandLocateSheet("search_field");
@@ -1712,18 +1680,14 @@ function bindSheetHandlers() {
     });
     renderSearch();
   }
+  on("#inspection-done",markInspection);
   on("#locate-confirm", confirmCentre);
   on("#toggle-suggestions", () => toggleSuggestions());
   on("#open-suggestions", () => toggleSuggestions(true));
   $$("[data-alt]").forEach((button) => button.addEventListener("click", () => chooseAlternative(button.dataset.alt)));
   on("#confirm-pin", () => confirmPickup("original"));
   on("#confirm-alternative", () => confirmPickup("alternative"));
-  on("#keep-pin", () => {
-    state.ui.overridePending = true;
-    log("override_attempted", { spot_id: state.ui.selectedSpotId });
-    render();
-    setSheet("full");
-  });
+  on("#keep-pin", requestPickupOverride);
   on("#override-cancel", () => {
     state.ui.overridePending = false;
     log("override_cancelled", { spot_id: state.ui.selectedSpotId });
@@ -1739,16 +1703,9 @@ function bindSheetHandlers() {
     log("session_done", {});
     render();
   });
-  const stepFree = $("#step-free");
-  if (stepFree) {
-    stepFree.addEventListener("change", () => {
-      state.ui.stepFreeOnly = stepFree.checked;
-      log("step_free_filter", { enabled: stepFree.checked });
-      render();
-    });
-  }
 
   on("#driver-confirm", () => {
+    if (state.ui.driverConfirmed || !validCoords(driverPickupTarget()?.coordinates)) return;
     state.ui.driverConfirmed = true;
     log("driver_plan_confirmed", { spot_id: state.ui.chosenAlternativeId || state.ui.selectedSpotId });
     render();
@@ -1768,12 +1725,14 @@ function bindSheetHandlers() {
     render();
   });
   on("#driver-suggest", () => {
+    if (!canDriverSuggest()) return;
     state.ui.driverSuggestOpen = true;
     render();
     setSheet("full");
   });
   $$("[data-driver-suggest]").forEach((button) =>
     button.addEventListener("click", () => {
+      if (!canDriverSuggest() || !alternativesFor(driverPickupTarget()).some(item=>item.spot.id===button.dataset.driverSuggest)) return;
       state.ui.driverSuggested = button.dataset.driverSuggest;
       state.ui.driverSuggestOpen = false;
       log("driver_suggested_relocation", { spot_id: button.dataset.driverSuggest });
@@ -1817,6 +1776,7 @@ function bindSheetHandlers() {
 }
 
 function toggleSuggestions(forceOpen) {
+  if (!studyCanInteract() || !passengerPickupState().canOpenSuggestions) return;
   const ui = state.ui;
   const next = forceOpen === true ? true : !ui.suggestionsOpen;
   ui.suggestionsOpen = next;
@@ -1827,65 +1787,14 @@ function toggleSuggestions(forceOpen) {
 }
 
 function logRenderEvents() {
-  const ui = state.ui;
-  const role = state.session.role;
-  const scenario = state.scenario;
-  let focal = null;
-  if (role === "driver") {
-    focal = scenario.driverScreen === "accepted-alternative" ? getSpot(ui.chosenAlternativeId) || getSpot(scenario.alternativeSpot) : selectedSpot();
-  } else if (ui.screen === "confirmed") {
-    focal = getSpot(ui.chosenAlternativeId) || selectedSpot();
-  } else if (ui.screen === "pickup") {
-    focal = selectedSpot();
-  }
-  if (!focal) return;
-
-  if (!validCoords(focal.coordinates)) {
-    if (!ui.badLocationLogged) {
-      ui.badLocationLogged = true;
-      log("error_or_exception", { message: `Spot ${focal.id} has no usable coordinates`, spot_id: focal.id });
-    }
-  }
-
-  const label = validCoords(focal.coordinates) ? freshnessText(focal) : "Location unavailable";
-  const signature = `${role}|${ui.screen}|${focal.id}|${focal.state}|${focal.status}|${label}|${scenario.variant}`;
-  if (signature !== lastViewSignature) {
-    lastViewSignature = signature;
-    log("view_rendered", {
-      view: role,
-      screen: ui.screen,
-      spot_id: focal.id,
-      lifecycle_state: focal.state,
-      status_displayed: focal.status,
-      label_displayed: label,
-      reason_displayed: role === "driver" || scenario.variant !== "unexplained" ? focal.reason : null,
-    });
-  }
-
-  if (role === "passenger" && ui.screen === "pickup" && ui.statusLoggedFor !== focal.id) {
-    ui.statusLoggedFor = focal.id;
-    log("status_shown", {
-      spot_id: focal.id,
-      status: focal.status,
-      freshness_label: label,
-      source_label: sourceText(focal),
-      reason_visible: scenario.variant !== "unexplained",
-    });
-    if (scenario.pressure && ui.relocationLoggedFor !== focal.id) {
-      ui.relocationLoggedFor = focal.id;
-      ui.countdownStartedAt = new Date().toISOString();
-      const best = alternativesFor(focal)[0];
-      log("relocation_shown", {
-        spot_id: focal.id,
-        variant: scenario.variant,
-        alternative_spot_id: best ? best.spot.id : null,
-        alternative_walk_minutes: best ? best.walk : null,
-        walk_origin: walkOriginKind(),
-        countdown_start: scenario.countdownSeconds,
-      });
-      log("explanation_visible", { value: scenario.variant !== "unexplained" });
-    }
-  }
+ if (studyNotice()) return;
+ const focal=state.ui.screen==="confirmed"?(getSpot(state.ui.chosenAlternativeId)||selectedSpot()):selectedSpot();
+ if (!focal || state.ui.screen==="locate") return;
+ const displayed=displayedSnapshot(focal);
+ const signature=JSON.stringify([state.session.attemptId,state.ui.screen,displayed,state.ui.suggestionsOpen]);
+ if (signature===lastViewSignature) return;
+ lastViewSignature=signature;
+ log("view_rendered",{screen:state.ui.screen,displayed,underlying:spotSnapshot(focal),alternatives:passengerPickupState().browsing?alternativesFor(focal).map(a=>({spot_id:a.spot.id,status:STATUS_LABEL[a.spot.status],reason:supportingVisible()?a.spot.reason:null,walk_minutes:a.walk})):[]});
 }
 
 /* ---------- Toasts, icons, boot ---------- */
@@ -1914,6 +1823,7 @@ function applyUrlParams() {
       params.get("pid") || params.get("participant") || state.session.participantId,
       params.get("variant") || getScenario(scenarioId.toUpperCase()).variant,
       params.get("order") || 1,
+      {group:params.get("group") || "A"},
     );
     window.history.replaceState({}, "", window.location.pathname + (facilitator ? "?facilitator=1" : ""));
     return true;
@@ -1933,6 +1843,7 @@ function applyGpsParam() {
 function boot() {
   initSheetDrag();
   initFacilitator();
+  initStudyControls();
 
   $("#back-button").addEventListener("click", goBack);
   $("#report-form").addEventListener("submit", handleReportSubmit);
@@ -1955,7 +1866,10 @@ function boot() {
 
   const restored = restore();
   applyGpsParam();
+  if (state.scenario.study) state.session.useGps=false;
   const loadedFromUrl = applyUrlParams();
+  if (!state.session.attemptId) state.session.attemptId=state.attempt.id;
+  if (restored && !loadedFromUrl) log("session_restored",{attempt_status:state.attempt.status});
   setSheet(state.session.role === "passenger" && state.ui.screen === "locate" ? (state.ui.locateExpanded ? "full" : "peek") : "half");
   if (!loadedFromUrl) {
     if (!restored) {
@@ -1972,8 +1886,8 @@ function boot() {
       requestUserPosition({ recenter: true });
     }
   }
-  $("#locate-me").addEventListener("click", () => requestUserPosition({ recenter: true, manual: true }));
-  if (["1", "true", "yes"].includes(String(new URLSearchParams(window.location.search).get("facilitator") || "").toLowerCase())) openFacilitator(true);
+  $("#locate-me").addEventListener("click", recenterPassengerPosition);
+  if (state.session.mode === "study" || state.scenario.study || ["1", "true", "yes"].includes(String(new URLSearchParams(window.location.search).get("facilitator") || "").toLowerCase())) openFacilitator(true);
   window.setTimeout(() => map.invalidateSize(true), 200);
 }
 
