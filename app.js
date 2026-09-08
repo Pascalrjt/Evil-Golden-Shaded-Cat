@@ -863,19 +863,17 @@ function passengerPickupState(spot = selectedSpot()) {
  const frozen=Boolean(scenario.study && (a.status==="ended" || a.pausedAt));
  const active=state.session.role==="passenger" && ui.screen==="pickup" && !frozen && !ui.completed;
  const valid=Boolean(spot && validCoords(spot.coordinates));
- const staged=scenario.id==="P3" && ["inspect","await_reveal","reveal"].includes(a.p3Stage);
  const suitable=spot?.status==="suitable";
  const alternatives=alternativesFor(spot);
- const canSuggest=active && valid && !staged && !suitable && scenario.suggestions!=="none" && alternatives.length>0;
- const canKeep=active && valid && !staged && !suitable;
+ const canSuggest=active && valid && !suitable && scenario.suggestions!=="none" && alternatives.length>0;
+ const canKeep=active && valid && !suitable;
  const overriding=canKeep && ui.overridePending;
  const chosen=canSuggest ? alternatives.find(item=>item.spot.id===ui.chosenAlternativeId)?.spot || null : null;
  const originalChosen=canSuggest && !chosen && Boolean(ui.originalChosen);
- return {active,valid,staged,suitable,alternatives,canSuggest,canKeep,overriding,chosen,originalChosen,
+ return {active,valid,suitable,alternatives,canSuggest,canKeep,overriding,chosen,originalChosen,
   browsing:canSuggest && ui.suggestionsOpen && !overriding,
-  canInspect:active && valid && staged && a.p3Stage==="inspect",
-  canReport:active && valid && !staged && !overriding,
-  canConfirmOriginal:active && valid && suitable && !staged,
+  canReport:active && valid && !overriding,
+  canConfirmOriginal:active && valid && suitable,
   canConfirmAlternative:Boolean(chosen && !overriding),
   canOpenSuggestions:canSuggest && !overriding};
 }
@@ -893,7 +891,6 @@ function passengerPickupTemplate(spot) {
  const originalLabel=scenario.p4?"Your original pickup":"Confirm your pickup spot";
  const head=`<header class="sheet-header"><p class="eyebrow">${originalLabel}</p><h1>${escapeHtml(spot.name)}</h1><p class="muted">${escapeHtml(spot.address)}</p></header>${statusCard(spot)}`;
  if (!view.active || !view.valid) return head;
- if (view.staged) return `${head}<div class="actions">${view.canInspect?'<button class="button primary" id="inspection-done" type="button">I’ve inspected this pickup</button>':'<p class="muted">Please tell the facilitator you have finished inspecting.</p>'}</div>`;
  if (view.overriding) {
   const message=spot.status==="unknown"?"Pickup availability here is unconfirmed. Use this pin?":"The driver may not be able to stop here. Keep this pin?";
   return `${head}<div class="override-box ${spot.status}"><i data-lucide="${spot.status==="unknown"?"circle-help":"triangle-alert"}"></i><div><strong>${STATUS_LABEL[spot.status]}</strong><div class="override-support">${supportingVisible()?escapeHtml(spot.reason):""}</div><span>${message}</span></div><div class="row two"><button class="button secondary" id="override-cancel" type="button">Go back</button><button class="button primary" id="override-confirm" type="button">${spot.status==="unknown"?"Use this pin":"Keep my pin"}</button></div></div>`;
@@ -1151,7 +1148,6 @@ function placePin(spotId, label, entry) {
   if (!spot || (entry!=="preset" && !studyCanInteract())) return;
   const ui = state.ui;
   if (state.scenario.p4 && spot.id!==state.scenario.presetSpot) return;
-  if (state.scenario.id==="P3" && state.attempt.p3Stage==="await_reveal") state.attempt.p3Stage="inspect";
   ui.selectedSpotId = spot.id;
   ui.searchLabel = label || spot.name;
   ui.screen = "pickup";
@@ -1358,8 +1354,8 @@ function handleReportSubmit(event) {
   log("report_accepted",{submission_id:report.id,spot_id:spot.id,reason,actor,chosen:spotSnapshot(spot),displayed:displayedSnapshot(spot)});
   state.attempt.reportCount++;
   if (state.scenario.p4) log("p4_report_flagged",{spot_id:spot.id});
-  if (state.scenario.id==="P3" && state.attempt.p3Stage==="report" && spot.id===state.scenario.presetSpot && ["Limited access","Construction or event"].includes(reason)) {
-    state.attempt.reportAccepted=true; state.attempt.p3Stage="relocate";
+  if (state.scenario.id==="P3" && spot.id===state.scenario.presetSpot && ["Limited access","Construction or event"].includes(reason)) {
+    state.attempt.reportAccepted=true;
     log("p3_valid_obstruction_report_accepted",{spot_id:spot.id});
   }
   log("report_submitted", { spot_id: spot.id, reason, note_present: Boolean(note), actor });
@@ -1719,7 +1715,6 @@ function bindSheetHandlers() {
     });
     renderSearch();
   }
-  on("#inspection-done",markInspection);
   on("#locate-confirm", confirmCentre);
   on("#toggle-suggestions", () => toggleSuggestions());
   on("#toggle-status-detail", toggleStatusDetail);

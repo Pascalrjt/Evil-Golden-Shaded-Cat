@@ -60,9 +60,9 @@ test('P4 records chosen alternative snapshot and underlying/displayed informatio
  const h=harness();h.load('P4-WENDYS-NOEXP');h.start();h.run('chooseAlternative("george-adelaide")');assert.equal(h.run('state.attempt.status'),'running');h.run('confirmPickup("alternative")');
  const s=h.json('EventLog.summaries()[0]');assert.equal(s.decision,'accept');assert.equal(s.chosen_pickup_suitability,'caution');assert.equal(s.displayed.reason,null);assert.ok(s.chosen.reason);assert.match(h.run('EventLog.summaryCSV()'),/chosen_pickup_suitability/);
 });
-test('P3 requires inspection, reveal and accepted report, preserving previous evidence',()=>{
- const h=harness();h.load('P3');h.start();h.run('placePin("ann-street",null,"search")');h.run('confirmPickup("original")');assert.equal(h.run('state.attempt.status'),'running');
- h.advance(10000);h.run('markInspection();revealObstruction()');assert.equal(h.run('selectedSpot().status'),'suitable');assert.equal(h.run('canGoBack()'),false);
+test('P3 requires an accepted obstruction report and relocation, preserving previous evidence',()=>{
+ const h=harness();h.load('P3');h.start();h.run('placePin("ann-street",null,"search")');assert.equal(h.run('passengerPickupState().canConfirmOriginal'),true);assert.equal(h.run('passengerPickupState().canReport'),true);
+ h.advance(10000);h.run('revealObstruction()');assert.equal(h.run('selectedSpot().status'),'suitable');assert.equal(h.run('canGoBack()'),false);assert.equal(h.run('passengerPickupState().canReport'),false);
  h.advance(15000);h.run('finishReveal()');h.advance(5000);h.run('openReport({mode:"report",actor:"passenger",spotId:"ann-street"})');h.el('reason').value='Construction or event';h.run('handleReportSubmit({preventDefault(){}})');
  assert.equal(h.run('state.attempt.status'),'running');assert.equal(h.run('state.attempt.reportAccepted'),true);assert.equal(h.run('selectedSpot().status'),'caution');assert.match(h.run('freshnessText(selectedSpot())'),/One passenger report, just now/);assert.equal(h.run('selectedSpot().history[0].report_count'),4);
  h.advance(7000);h.run('chooseAlternative("edward-central");confirmPickup("alternative")');const s=h.json('state.attempt.summary');assert.equal(s.elapsed_ms,22000);assert.equal(s.script_pause_ms,15000);assert.equal(s.task_outcome,'independent');assert.equal(s.chosen_pickup_suitability,'suitable');
@@ -109,7 +109,7 @@ test('preview is interactive without timing and excluded from summaries, then st
  h.start();assert.equal(h.run('EventLog.summaries().filter(r=>r.started).length'),1);
 });
 test('preview preserves P3 reveal and reporting stages without a timeout',()=>{
- const h=harness();h.run('loadScenario("P3","PREVIEW",null,1,{mode:"preview",prepared:false});placePin("ann-street",null,"map");markInspection();revealObstruction()');assert.equal(h.run('state.attempt.p3Stage'),'reveal');
+ const h=harness();h.run('loadScenario("P3","PREVIEW",null,1,{mode:"preview",prepared:false});placePin("ann-street",null,"map");revealObstruction()');assert.equal(h.run('Boolean(state.attempt.pausedAt)'),true);
  h.advance(500000);h.run('finishReveal();openReport({mode:"report",actor:"passenger",spotId:"ann-street"})');h.el('reason').value='Limited access';h.run('handleReportSubmit({preventDefault(){}});chooseAlternative("edward-central");confirmPickup("alternative")');
  assert.equal(h.run('state.ui.screen'),'confirmed');assert.equal(h.run('EventLog.summaries().length'),0);
 });
@@ -138,7 +138,7 @@ test('skipping the last scenario completes the sequence and an expired attempt r
  h.load('P1');h.start();h.run('openSkipScenario()');h.el('#fac-skip-reason').value='Too late';h.advance(180001);h.run('confirmScenarioSkip()');assert.equal(h.run('state.attempt.summary.stop_reason'),'timeout');assert.equal(h.run('state.scenario.id'),'P1');
 });
 test('skipping during the P3 script retains the pause and skip is absent from preview',()=>{
- const h=harness();h.load('P3');h.start();h.advance(5000);h.run('placePin("ann-street",null,"map");markInspection();revealObstruction()');h.advance(10000);h.run('openSkipScenario()');h.el('#fac-skip-reason').value='Stop this scenario';h.run('confirmScenarioSkip()');
+ const h=harness();h.load('P3');h.start();h.advance(5000);h.run('placePin("ann-street",null,"map");revealObstruction()');h.advance(10000);h.run('openSkipScenario()');h.el('#fac-skip-reason').value='Stop this scenario';h.run('confirmScenarioSkip()');
  const row=h.json('EventLog.summaries().find(r=>r.scenario_id==="P3")');assert.equal(row.elapsed_ms,5000);assert.equal(row.script_pause_ms,10000);assert.equal(row.task_outcome,'skipped_after_start');
  h.run('changeMode("preview");renderStudyControls();openSkipScenario()');assert.equal(h.el('#fac-skip-task').hidden,true);assert.equal(h.run('canSkipScenario()'),false);
 });
@@ -166,10 +166,18 @@ test('status changes clear stale relocation state and reopen alternatives after 
  assert.equal(h.run('state.ui.chosenAlternativeId'),null);assert.equal(h.run('passengerPickupState().canConfirmOriginal'),true);
  h.run('openReport({mode:"report",actor:"passenger",spotId:"queen-street"})');h.el('reason').value='Limited access';h.run('handleReportSubmit({preventDefault(){}});syncPassengerPickupState()');assert.equal(h.run('passengerPickupState().browsing'),true);assert.equal(h.run('passengerPickupState().canConfirmOriginal'),false);
 });
-test('P3 inspection and script pause block hidden shortcuts until the report stage',()=>{
+test('P3 controls work as normal; confirming without a report or reveal is incomplete',()=>{
  const h=harness();h.load('P3');h.start();h.run('placePin("ann-street",null,"map")');
- assert.match(h.run('passengerPickupTemplate(selectedSpot())'),/id="inspection-done"/);h.run('onPinTap("edward-central");chooseAlternative("edward-central");openReport({actor:"passenger",spotId:"ann-street",mode:"report"})');assert.equal(h.run('state.ui.chosenAlternativeId'),null);assert.equal(h.run('reportContext'),null);
- h.run('markInspection();revealObstruction()');assert.equal(h.run('passengerPickupState().canReport'),false);h.run('finishReveal()');assert.equal(h.run('passengerPickupState().canReport'),true);assert.equal(h.run('passengerPickupState().canSuggest'),false);
+ assert.doesNotMatch(h.run('passengerPickupTemplate(selectedSpot())'),/inspection-done/);assert.match(h.run('passengerPickupTemplate(selectedSpot())'),/id="confirm-pin"/);
+ h.run('openReport({actor:"passenger",spotId:"ann-street",mode:"report"})');assert.notEqual(h.run('reportContext'),null);h.run('closeReport(false)');
+ h.run('confirmPickup("original")');const s=h.json('state.attempt.summary');assert.equal(s.task_outcome,'incomplete');assert.equal(s.confirmation_occurred,true);assert.equal(s.p3_requirements_met,false);assert.equal(s.script_pause_ms,0);
+});
+test('P3 script pause can be used at any point and only pauses the timer',()=>{
+ const h=harness();h.load('P3');h.start();h.run('placePin("ann-street",null,"map")');h.advance(4000);
+ h.run('revealObstruction()');assert.match(h.run('studyNotice()'),/Temporary barriers/);h.run('confirmPickup("original")');assert.equal(h.run('state.attempt.status'),'running');
+ h.advance(6000);h.run('finishReveal()');assert.equal(h.run('state.attempt.pausedAt'),null);assert.equal(h.run('elapsedMs()'),4000);assert.equal(h.run('studyNotice()'),'');
+ h.run('openReport({mode:"report",actor:"passenger",spotId:"ann-street"})');h.el('reason').value='Limited access';h.run('handleReportSubmit({preventDefault(){}})');assert.equal(h.run('state.attempt.reportAccepted'),true);
+ h.run('chooseAlternative("turbot-central");confirmPickup("alternative")');assert.equal(h.json('state.attempt.summary').task_outcome,'independent');
 });
 test('invalid locations and ended tasks expose no passenger mutation controls',()=>{
  const h=harness();h.load('P1');h.start();h.run('placePin("queen-street",null,"map");selectedSpot().coordinates=null');

@@ -15,13 +15,16 @@ Map tiles and the existing Leaflet/Lucide dependencies require a network connect
 3. Close the panel to reveal the screen and read the task. Open the panel again and
    press **Start task**. Loading and screen reveal are recorded separately
    from task start. The participant can interact once the task starts.
-4. For P3, the participant presses **I've inspected this pickup**. Use **Reveal obstruction** to show temporary barriers blocking the kerb, then read the obstruction script.
+4. For P3, all pickup controls work as normal. Watch the participant and, before they confirm
+   a pickup, tell them temporary barriers are blocking the kerb. **Reveal obstruction** is optional:
+   it shows a barrier notice, pauses the timer while you read the script and records the pause.
    Use **Resume after reveal** afterwards. The pickup information stays suitable
    until a report is accepted. Limited access and Construction or event are supported
    obstruction categories. Report receipt changes the information to temporary caution,
    with one passenger report awaiting verification and the old evidence retained in history.
    Reporting alone does not complete the task. Final confirmation ends the attempt, with
-   unmet inspection/report/relocation requirements recorded as incomplete.
+   unmet report/relocation requirements recorded as incomplete. A participant who confirms
+   before the prompt ends the attempt as incomplete; record why on the sheet.
 5. P0 has a two-minute familiarisation limit. P1–P3 have a three-minute task limit;
    only the P3 reveal script is paused. Two recorded assists stop P1–P3. Practice is flagged.
    Use **End task**, choose whether the facilitator or participant ended it, then confirm.
@@ -156,8 +159,8 @@ list and enables confirmation of that alternative, including P4's matched choice
 The keep-pin prompt shows only its cancel and confirm actions. Unknown pickups use neutral
 unconfirmed-availability wording. When alternatives are unavailable, the passenger can return
 to the map or explicitly retain the pin. Invalid locations cannot be confirmed or reported.
-P3 inspection and reveal stages limit actions to the appropriate protocol step; reporting
-becomes available after the reveal. Finished study attempts freeze passenger actions.
+P3 has no staged locks. Its controls follow the same rules as P1 and P2; only the optional
+facilitator script pause freezes the screen. Finished study attempts freeze passenger actions.
 
 These rules also govern map shortcuts and displayed-event records. State changes clear stale
 alternatives and override prompts. Driver relocation suggestions require a current warning
@@ -169,7 +172,8 @@ and available candidates. Map chevrons appear only on actionable markers.
   can be recorded separately; software cannot establish intent or comprehension.
 - `confirmation_occurred` and `chosen_pickup_suitability` are separate. A deliberate
   original-pin override can be a completed interaction while its chosen location is cautionary
-  or not recommended. P3 additionally checks its staged reporting/relocation requirements.
+  or not recommended. P3 additionally requires an accepted obstruction report on the target
+  pin and a confirmed pickup other than that pin. Inspection is not recorded as an event.
 - P4 `decision`: accept (final alternative confirmation), override (final original-pin
   confirmation) or no_decision. Abandonment has its own flag. Alternative selection is an
   intermediate event, not the final decision.
@@ -203,7 +207,7 @@ supplement a supported category; unsupported categories are rejected.
 
 Run `node --test tests/study.test.cjs` from this directory. These are dependency-free
 behavioural tests for fixtures, counterbalancing, visibility, final outcomes, timed stops,
-P3 staging, validation, exports and resets. Native Helium checks cover the participant UI.
+the P3 script pause, validation, exports and resets. Native Helium checks cover the participant UI.
 
 Files: `data.js` fixtures; `study.js` timing/observations; `app.js` map and interaction;
 `log.js` event and summary exports; `index.html` controls; `styles.css` layout.

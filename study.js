@@ -1,6 +1,6 @@
 /* Study controls, timing and observation markers. Loaded before app.js; called after boot. */
 function newAttempt() {
- return {id:crypto.randomUUID(),status:"ready",startedAt:null,endedAt:null,pausedAt:null,pausedMs:0,assists:0,reportCount:0,reportAttemptCount:0,p3Stage:"inspect",inspectionAt:null,reportAccepted:false,arrivalMarked:false,screenRevealedAt:null,summary:null};
+ return {id:crypto.randomUUID(),status:"ready",startedAt:null,endedAt:null,pausedAt:null,pausedMs:0,assists:0,reportCount:0,reportAttemptCount:0,revealedAt:null,reportAccepted:false,arrivalMarked:false,screenRevealedAt:null,summary:null};
 }
 function isPreview() { return state.session.mode === "preview"; }
 function sessionPrepared() { return state.session.prepared ?? Boolean(state.scenario.study); }
@@ -43,29 +43,19 @@ function startTask() {
  log("task_started",{limit_seconds:state.scenario.limitSeconds,think_aloud:state.session.thinkAloud,simulated_start:state.ui.userPosition,fixture:state.spots.map(spotSnapshot)});
  openFacilitator(false); render();
 }
-function markInspection() {
- if (!studyCanInteract() || state.scenario.id!=="P3" || state.attempt.p3Stage!=="inspect") return;
- state.attempt.inspectionAt=Date.now();
- state.attempt.inspectedSpotId=state.ui.selectedSpotId;
- state.attempt.p3Stage="await_reveal";
- log("inspection_indicated",{spot_id:state.ui.selectedSpotId,target_match:state.ui.selectedSpotId===state.scenario.presetSpot});
- render();
-}
+/* Optional P3 script pause. Passenger controls are never gated on it; the facilitator prompts the participant before confirmation. */
+function scriptPaused() { return state.scenario.id==="P3" && Boolean(state.attempt.pausedAt); }
 function revealObstruction() {
  const a=state.attempt;
- if (state.scenario.id!=="P3" || a.status!=="running" || a.p3Stage!=="await_reveal") return;
- if (a.inspectedSpotId!==state.scenario.presetSpot) {
-  showToast("Check the task location","The inspected point differs from the Central Station target. Record assistance if required, then ask the participant to inspect the target.");
-  a.p3Stage="inspect"; render(); return;
- }
- a.pausedAt=Date.now(); a.p3Stage="reveal";
- log("obstruction_reveal_started",{spot_id:state.scenario.presetSpot,scene:"Temporary barriers are blocking the kerb",status_unchanged:getSpot(state.scenario.presetSpot).status});
+ if (state.scenario.id!=="P3" || a.status!=="running" || a.pausedAt) return;
+ a.pausedAt=Date.now(); a.revealedAt=a.revealedAt || a.pausedAt;
+ log("obstruction_reveal_started",{spot_id:state.scenario.presetSpot,selected_spot_id:state.ui.selectedSpotId,target_selected:state.ui.selectedSpotId===state.scenario.presetSpot,scene:"Temporary barriers are blocking the kerb",status_unchanged:getSpot(state.scenario.presetSpot).status});
  openFacilitator(false); render();
 }
 function finishReveal() {
  const a=state.attempt;
- if (a.p3Stage!=="reveal" || !a.pausedAt) return;
- const duration=Date.now()-a.pausedAt; a.pausedMs+=duration; a.pausedAt=null; a.p3Stage="report";
+ if (!scriptPaused()) return;
+ const duration=Date.now()-a.pausedAt; a.pausedMs+=duration; a.pausedAt=null;
  log("obstruction_reveal_ended",{pause_ms:duration}); openFacilitator(false); render();
 }
 function finishTask(reason,chosen=null,decision=null,endAt=Date.now()) {
@@ -79,7 +69,7 @@ function finishTask(reason,chosen=null,decision=null,endAt=Date.now()) {
   closeReport(false); render(); return;
  }
  const confirmed=Boolean(chosen);
- const p3Requirements=state.scenario.id!=="P3" || (a.reportAccepted && a.inspectionAt && a.p3Stage==="relocate" && chosen && chosen.id!==state.scenario.presetSpot);
+ const p3Requirements=state.scenario.id!=="P3" || (a.reportAccepted && chosen && chosen.id!==state.scenario.presetSpot);
  const outcome=skipped?reason:reason==="abandoned"?"abandoned":confirmed&&p3Requirements?(a.assists?"assisted":"independent"):"incomplete";
  a.summary={stop_reason:reason,task_outcome:outcome,confirmation_occurred:confirmed,chosen_pickup_suitability:chosen?chosen.status:"no_confirmed_choice",chosen:spotSnapshot(chosen),displayed:displayedSnapshot(chosen),elapsed_ms:elapsedMs(),wall_elapsed_ms:a.endedAt-a.startedAt,script_pause_ms:a.pausedMs,decision:state.scenario.p4?(decision || "no_decision"):null,abandoned:reason==="abandoned",assistance_count:a.assists,report_count:a.reportCount,report_attempt_count:a.reportAttemptCount,p4_report_flag:Boolean(state.scenario.p4&&a.reportAttemptCount),p3_report_accepted:a.reportAccepted,p3_requirements_met:Boolean(p3Requirements),practice:state.scenario.id==="P0"};
  a.summary.skipped=skipped;
@@ -194,15 +184,15 @@ function renderStudyControls() {
  $("#fac-skip-task").hidden=!canSkipScenario();
  if (!canSkipScenario() || $("#fac-skip-options").dataset.attemptId!==a.id) $("#fac-skip-options").hidden=true;
  if (!running) $("#fac-end-options").hidden=true;
- $("#fac-reveal").hidden=state.scenario.id!=="P3" || a.p3Stage!=="await_reveal" || a.status!=="running";
+ $("#fac-reveal").hidden=state.scenario.id!=="P3" || a.status!=="running" || Boolean(a.pausedAt);
  $("#fac-reveal").disabled=false;
- $("#fac-reveal-end").hidden=state.scenario.id!=="P3" || a.p3Stage!=="reveal" || a.status!=="running";
+ $("#fac-reveal-end").hidden=!scriptPaused() || a.status!=="running";
  $("#fac-reveal-end").disabled=false;
  $("#fac-think-field").hidden=!ready || Boolean(state.scenario.p4);
  $("#fac-think-aloud").disabled=!ready || Boolean(state.scenario.p4);
  if (state.scenario.p4) $("#fac-think-aloud").checked=false;
  $("#fac-study-guidance").hidden=preview && state.scenario.id!=="P3";
- $("#fac-study-guidance").textContent=state.scenario.p4?"Run the separate 2-minute arrival timer. Give the six-item form immediately after decision or timeout, before probes.":state.scenario.id==="P3"?"After inspection, reveal the obstruction and read the script. Resume for reporting and relocation. Use the separate P3-E card afterwards.":"Read the prompt, then press Start task. Record assistance and comprehension below.";
+ $("#fac-study-guidance").textContent=state.scenario.p4?"Run the separate 2-minute arrival timer. Give the six-item form immediately after decision or timeout, before probes.":state.scenario.id==="P3"?"All pickup controls work as normal. Prompt the participant about the barriers before they confirm a pickup. Reveal obstruction pauses the timer while you read the script; Resume continues it. Use the separate P3-E card afterwards.":"Read the prompt, then press Start task. Record assistance and comprehension below.";
  if (!preview && ended) $("#fac-study-guidance").textContent=state.scenario.p4 ? "Give the six-item form before probes, then finish observations before continuing." : "Finish observations before continuing to the next scenario.";
  else if (running && state.scenario.id!=="P3" && !state.scenario.p4) $("#fac-study-guidance").textContent="The task is running. Record assistance and comprehension below.";
  $("#fac-result").hidden=preview || !a.summary;
@@ -221,7 +211,7 @@ function studyNotice() {
  const a=state.attempt;
  if (!state.scenario.study) return "";
  if (a.status==="ended" && state.ui.screen!=="confirmed") return '<header class="sheet-header"><h1>Task finished</h1><p>Please hand the device back to the facilitator.</p></header>';
- if (state.scenario.id==="P3" && a.p3Stage==="reveal") return '<header class="sheet-header"><p class="eyebrow">Scenario update</p><h1>Temporary barriers are blocking the kerb.</h1><p>Please listen to the facilitator.</p></header>';
+ if (scriptPaused()) return '<header class="sheet-header"><p class="eyebrow">Scenario update</p><h1>Temporary barriers are blocking the kerb.</h1><p>Please listen to the facilitator.</p></header>';
  return "";
 }
 function initStudyControls() {
