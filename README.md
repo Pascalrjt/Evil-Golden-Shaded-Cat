@@ -114,6 +114,9 @@ Unmatched dropped pins have no report data and retain local alternatives and rep
 
 Candidate coordinates and Council sign IDs are stored in `data.js`. The source is
 [Brisbane City Council's passenger-loading dataset](https://data.brisbane.qld.gov.au/explore/dataset/two-minute-passenger-loading-zones/table/).
+P3's starting position and Central Station marker use the station-side
+[Ann Street entrance mapped in OpenStreetMap](https://www.openstreetmap.org/node/13114522481)
+(-27.4663249, 153.0258786), checked 8 September 2026.
 The scenario landmark positions are indicative. Exact kerbs, current sign restrictions and
 walking routes need a site check before any real-world use. Map lines illustrate connections;
 they are not routed walking directions. Non-P4 walk times use a simple distance estimate.

@@ -1,7 +1,7 @@
 /* All pickup conditions and walk times are simulated study fixtures.
    Candidate kerb coordinates: BCC passenger-loading sign records, checked 8 Sep 2026.
    Sign locations are indicative; this prototype does not provide live stopping advice. */
-const PROTOTYPE_VERSION = "passenger-study-2026-09-08";
+const PROTOTYPE_VERSION = "passenger-study-2026-09-08-central-entrance";
 const CBD_CENTER = [-27.4698, 153.0251];
 const DEFAULT_GPS_POSITION = [-27.469807, 153.025242];
 const CBD_BOUNDS = [[-27.479,153.013],[-27.461,153.036]];
@@ -20,7 +20,8 @@ const SPOT_FIXTURE = [
  fixture("pancake","Pancake Manor","18 Charlotte Street, venue frontage",[-27.47245,153.02547],"restaurants","suitable","verified","Clear kerb space for passenger pickup",4,"12 minutes ago"),
  fixture("queen-street","Hungry Jack’s, Queen Street Mall","Mall frontage near Albert Street",[-27.469807,153.025242],"restaurants","blocked","verified","Pedestrian mall access restricts vehicle pickup here",4,"12 minutes ago"),
  fixture("maru","Maru Korean Restaurant","157 Elizabeth Street, venue frontage",[-27.46959,153.02693],"restaurants","caution","temporary","Construction work is reducing kerb space",1,"3 days ago"),
- fixture("ann-street","Central Station, Ann Street","Station entrance, Ann Street side",[-27.46663,153.02614],"central","suitable","verified","Clear kerb access outside the station",4,"12 minutes ago"),
+ // Station-side Ann Street entrance: https://www.openstreetmap.org/node/13114522481
+ fixture("ann-street","Central Station, Ann Street","Station entrance, Ann Street side",[-27.4663249,153.0258786],"central","suitable","verified","Clear kerb access outside the station",4,"12 minutes ago"),
  fixture("wendys","Wendy’s, Albert / Adelaide","Albert Street frontage at Adelaide Street",[-27.46870,153.02452],"wendys","caution","verified","Driver cannot legally stop here",3,"8 minutes ago"),
  fixture("qut","QUT Gardens Point, George Street","Campus entrance at George and Alice Streets",[-27.47500,153.02742],"qut","caution","verified","Driver cannot legally stop here",3,"8 minutes ago"),
  fixture("charlotte-local","Charlotte Street","Between George and Albert Streets",[-27.471828,153.025794],"restaurants","suitable","verified","Clear kerb space for passenger pickup",3,"8 minutes ago",4543),
