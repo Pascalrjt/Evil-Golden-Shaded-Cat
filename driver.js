@@ -211,22 +211,22 @@ function driverInterviewTemplate() {
  return `<header class="sheet-header"><p class="muted small">Simulated pickup · use while stationary</p><h1>Pickup for ${PASSENGER_NAME}</h1></header>
   ${state.attempt.revealedAt ? '<div class="notice warn"><div><strong>Temporary barriers block the original pickup kerb.</strong><span>Respond in the order you would during a real pickup.</span></div></div>' : ""}
   ${active.id !== original.id ? `<div class="notice good"><div><strong>Passenger accepted the updated pickup</strong><span>${escapeHtml(relocationReason(original))}</span></div></div>` : ""}
-  <p class="section-label">Agreed pickup</p><h2>${escapeHtml(active.name)}</h2><p class="muted">${escapeHtml(active.address)}</p>${statusCard(active)}
-  <p class="muted small">Simulated arrival: ${active.driverEta} minutes${active.id !== original.id ? ` · Passenger walking, about ${walkFor(active, original)} minutes` : ""} · approach to ${escapeHtml(active.address)}</p>
+  <div class="driver-pickup"><p class="eyebrow">Agreed pickup</p><h2>${escapeHtml(active.name)}</h2><p class="muted small">${escapeHtml(active.address)}</p>${statusCard(active, {compact:true})}
+  <dl class="driver-stats"><div><dt>Simulated arrival</dt><dd>${active.driverEta} min</dd></div>${active.id !== original.id ? `<div><dt>Passenger walk</dt><dd>${walkFor(active, original)} min</dd></div>` : ""}</dl></div>
   ${d.pendingId ? `<div class="notice warn"><div><strong>${escapeHtml(getSpot(d.pendingId).name)} suggested</strong><span>${d.passengerResponse === "no_response" ? "Passenger has not responded." : "Waiting for passenger acceptance."} The agreed pickup stays at ${escapeHtml(active.name)}.</span></div></div>` : ""}
   ${d.message ? `<p class="driver-message"><strong>Passenger response</strong><br>${escapeHtml(d.message)}</p>` : ""}
   ${d.contactPending ? '<p class="driver-message">Contact requested. Awaiting the simulated passenger reply.</p>' : ""}
   ${d.lastAction ? `<p class="driver-message">Your decision: ${escapeHtml(d.lastAction)}</p>` : ""}
   <div class="actions">
    ${d.continueWarning ? `<div class="notice warn"><div><strong>${escapeHtml(STATUS_LABEL[active.status])}</strong><span>Confirm that continuing to this point represents what you would do.</span></div></div><button class="button primary" id="driver-continue-warning" type="button">Continue to this point</button><button class="button secondary" id="driver-cancel-warning" type="button">Go back</button>` : `<button class="button primary" id="driver-continue" type="button" ${d.confirmed || !validCoords(active.coordinates) ? "disabled" : ""}>${d.confirmed ? "Pickup plan confirmed" : "Continue to this pickup"}</button>`}
-   <button class="button secondary" id="driver-interview-suggest" type="button" ${!driverAlternatives().length ? "disabled" : ""}>Suggest another pickup</button>
-   <button class="button secondary" id="driver-contact" type="button" ${d.contactPending ? "disabled" : ""}>Contact passenger</button>
-   <button class="button secondary" id="driver-report-current" type="button">Report this pickup</button>
-   ${active.id !== original.id ? '<button class="button secondary" id="driver-report-original" type="button">Report original pickup</button>' : ""}
-   <button class="button secondary" id="driver-other" type="button">Another action</button>
+   <div class="row two"><button class="button secondary" id="driver-interview-suggest" type="button" ${!driverAlternatives().length ? "disabled" : ""}>Suggest a pickup</button>
+   <button class="button secondary" id="driver-contact" type="button" ${d.contactPending ? "disabled" : ""}>Contact passenger</button></div>
+   <div class="driver-quiet"><button class="button" id="driver-report-current" type="button">Report this pickup</button>
+   ${active.id !== original.id ? '<button class="button" id="driver-report-original" type="button">Report original pickup</button>' : ""}
+   <button class="button" id="driver-other" type="button">Another action</button></div>
   </div>${alternatives}${other}
   ${inspected && inspected.id !== active.id ? `<div class="driver-inspected"><p class="section-label">Inspecting ${escapeHtml(inspected.name)}</p><p class="muted">${escapeHtml(inspected.address)}</p>${statusCard(inspected)}<button class="button secondary" id="driver-report-inspected" type="button">Report this inspected spot</button></div>` : ""}
-  <details class="driver-extra"><summary>Contribute a pickup spot</summary><p class="muted">Suggest a spot you know for future pickups.</p><button class="button secondary" id="driver-add" type="button">Add a pickup spot</button></details>`;
+  <div class="driver-extra"><button class="button" id="driver-add" type="button"><i data-lucide="map-pin-plus"></i>Add a pickup spot you know</button><span class="muted small">Saved for future pickups</span></div>`;
 }
 function bindDriverInterviewHandlers(on) {
  if (!isDriverInterview()) return;

@@ -282,14 +282,14 @@ test('D4 driver sheet states why the pickup moved and pairs passenger walking ti
  let html=h.run('driverTemplate()');
  assert.match(html,/Passenger accepted the updated pickup/);
  assert.match(html,/Moved from Wendy’s, Albert \/ Adelaide\. Pickup may be difficult: driver cannot legally stop here\. Verified by 3 drivers, 8 minutes ago\./);
- assert.match(html,/Simulated arrival: 4 minutes · Passenger walking, about 3 minutes/);
+ assert.match(html,/Simulated arrival<\/dt><dd>4 min/);assert.match(html,/Passenger walk<\/dt><dd>3 min/);assert.match(html,/status-card suitable compact/);assert.match(html,/class="driver-extra"><button class="button" id="driver-add"/);assert.doesNotMatch(html,/<details class="driver-extra"/);
  h.run('loadScenario("D4","QUT",null,4,{driverLocation:"qut"})');h.start();h.run('driverAcceptRequest()');html=h.run('driverTemplate()');
- assert.match(html,/Moved from QUT Gardens Point, George Street\. Pickup may be difficult: driver cannot legally stop here\./);assert.match(html,/Passenger walking, about 3 minutes/);
+ assert.match(html,/Moved from QUT Gardens Point, George Street\. Pickup may be difficult: driver cannot legally stop here\./);assert.match(html,/Passenger walk<\/dt><dd>3 min/);
  h.load('D1');h.start();h.run('driverAcceptRequest()');html=h.run('driverTemplate()');
- assert.doesNotMatch(html,/Moved from|Passenger walking/);
+ assert.doesNotMatch(html,/Moved from|Passenger walk/);
  h.run('driverSuggest("charlotte-local");applyDriverPassengerResponse("accepted")');html=h.run('driverTemplate()');
  assert.match(html,/Moved from Hungry Jack’s, Queen Street Mall\. Pickup not recommended: no vehicle pickup access in the pedestrian mall\. Verified by 4 drivers, 12 minutes ago\./);
- assert.match(html,/Passenger walking, about \d+ minutes/);
+ assert.match(html,/Passenger walk<\/dt><dd>\d+ min/);
 });
 test('driver reporting keeps the original and accepted alternative targets explicit',()=>{
  const h=harness();h.load('D4');h.start();h.run('driverAcceptRequest()');h.run('state.ui.driverInspectId="wendys"');assert.equal(h.run('driverPickupTarget().id'),'adelaide-street');

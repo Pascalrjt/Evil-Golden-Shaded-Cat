@@ -2036,16 +2036,44 @@ h2 {
 .driver-alternatives .option-card { min-height: 100px; width: 100%; }
 .driver-alternatives .option-main { gap: 6px; }
 .driver-message,
-.driver-inspected,
-.driver-extra {
+.driver-inspected {
   margin: 16px 0;
   padding: 12px 0;
   border-top: 1px solid var(--line);
   line-height: 1.5;
   overflow-wrap: anywhere;
 }
-.driver-extra summary { cursor: pointer; padding: 8px 0; }
-.driver-extra .button { margin-top: 12px; }
+/* Contribute a spot: one quiet line at the foot of the sheet, not a second action stack. */
+.driver-extra {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin: 14px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.driver-extra .button { width: auto; min-height: 36px; padding: 6px 0; color: var(--muted); background: transparent; font-size: 14px; font-weight: 600; }
+.driver-extra .button svg { width: 16px; height: 16px; }
+.driver-extra .button:hover { color: #ffffff; }
+.driver-extra > .muted { font-size: 12px; }
+/* Post-acceptance sheet: compact status, two stats, one primary action and a quiet row. */
+.status-card.compact { grid-template-columns: 28px minmax(0, 1fr); gap: 10px; padding: 10px 12px; }
+.status-card.compact .status-icon { width: 28px; height: 28px; }
+.status-card.compact .status-icon svg { width: 15px; height: 15px; }
+.status-card.compact .status-label { font-size: 14px; }
+.status-card.compact .status-reason { margin-top: 2px; font-size: 13px; }
+.status-card.compact .status-meta { margin-top: 4px; color: var(--muted); font-size: 12px; }
+.driver-pickup h2 { font-size: 18px; }
+.driver-pickup > .muted { margin: 2px 0 10px; }
+.driver-stats { display: flex; gap: 22px; margin: 12px 0 0; }
+.driver-stats div { display: grid; gap: 2px; }
+.driver-stats dt { color: var(--muted); font-size: 12px; }
+.driver-stats dd { margin: 0; font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.driver-quiet { display: flex; flex-wrap: wrap; gap: 0 18px; margin-top: 2px; }
+.driver-quiet .button { width: auto; min-height: 36px; padding: 6px 0; color: var(--muted); background: transparent; font-size: 14px; font-weight: 600; }
+.driver-quiet .button:hover { color: #ffffff; }
 .driver-other { margin-bottom: 12px; }
 .driver-other select, .driver-other textarea { width: 100%; }
 #fac-task { white-space: pre-line; }

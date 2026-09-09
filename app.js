@@ -855,12 +855,16 @@ function initSheetDrag() {
 
 function statusCard(spot, options = {}) {
   const explain=options.explain ?? supportingVisible();
+  const compact=Boolean(options.compact);
   if (!validCoords(spot.coordinates)) return '<div class="status-card caution"><p>Location unavailable. Please tell the facilitator.</p></div>';
   const history=explain && spot.history?.length ? `<details class="evidence-history"><summary>Earlier pickup information</summary>${spot.history.map(h=>`<p>${escapeHtml(STATUS_LABEL[h.suitability])}: ${escapeHtml(h.reason)}. ${escapeHtml(h.evidence_state)}, ${escapeHtml(h.age)}; ${h.report_count} reports.</p>`).join("")}</details>`:"";
-  return `<div class="status-card ${spot.status} ${state.scenario.p4?"matched-status":""}">
+  const supporting=!explain?"":compact
+    ?`<p class="status-reason">${escapeHtml(spot.reason)}</p><p class="status-meta">${escapeHtml(freshnessText(spot))} · ${escapeHtml(sourceText(spot))}</p>`
+    :`<p class="status-reason">${escapeHtml(spot.reason)}</p><p class="status-meta">${escapeHtml(freshnessText(spot))}</p><p class="status-source">Source: ${escapeHtml(sourceText(spot))}</p>`;
+  return `<div class="status-card ${spot.status} ${compact?"compact":""} ${state.scenario.p4?"matched-status":""}">
     <span class="status-icon"><i data-lucide="${statusIcon(spot.status)}"></i></span><div>
     <p class="status-label">${STATUS_LABEL[spot.status]}</p>
-    <div class="supporting-slot">${explain?`<p class="status-reason">${escapeHtml(spot.reason)}</p><p class="status-meta">${escapeHtml(freshnessText(spot))}</p><p class="status-source">Source: ${escapeHtml(sourceText(spot))}</p>`:""}</div>
+    <div class="supporting-slot">${supporting}</div>
     ${history}</div></div>`;
 }
 function statusTag(spot) { return `<span class="tag ${spot.status}">${STATUS_LABEL[spot.status]}</span>`; }
